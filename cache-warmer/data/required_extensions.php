@@ -6,6 +6,7 @@
  */
 
 $required_extensions = [
+    'curl',
     'dom',
     'json',
     'libxml',

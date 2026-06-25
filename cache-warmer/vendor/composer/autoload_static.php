@@ -4,12 +4,12 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f
+class ComposerStaticInitac82da05671f4ba36fe5624cf13ec35d
 {
     public static $files = array (
         '6e3fae29631ef280660b3cdad06f25a8' => __DIR__ . '/..' . '/symfony/deprecation-contracts/function.php',
-        '7b11c4dc42b3b3023073cb14e519683c' => __DIR__ . '/..' . '/ralouphie/getallheaders/src/getallheaders.php',
         'a4a119a56e50fbb293281d9a48007e0e' => __DIR__ . '/..' . '/symfony/polyfill-php80/bootstrap.php',
+        '7b11c4dc42b3b3023073cb14e519683c' => __DIR__ . '/..' . '/ralouphie/getallheaders/src/getallheaders.php',
         '37a3dc5111fe8f707ab4c132ef1dbc62' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/functions_include.php',
         '0e6d7bf4a5811bfa5cf40c5ccd6fae6a' => __DIR__ . '/..' . '/symfony/polyfill-mbstring/bootstrap.php',
         '3937806105cc8e221b8fa8db5b70d2f2' => __DIR__ . '/..' . '/wp-cli/mustangostang-spyc/includes/functions.php',
@@ -17,112 +17,112 @@ class ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f
     );
 
     public static $prefixLengthsPsr4 = array (
-        'v' => 
+        'v' =>
         array (
             'vipnytt\\' => 8,
         ),
-        'S' => 
+        'S' =>
         array (
             'Symfony\\Polyfill\\Php80\\' => 23,
             'Symfony\\Polyfill\\Mbstring\\' => 26,
             'Symfony\\Component\\Finder\\' => 25,
         ),
-        'P' => 
+        'P' =>
         array (
             'Psr\\Http\\Message\\' => 17,
             'Psr\\Http\\Client\\' => 16,
         ),
-        'M' => 
+        'M' =>
         array (
             'Mustangostang\\' => 14,
         ),
-        'G' => 
+        'G' =>
         array (
             'GuzzleHttp\\Psr7\\' => 16,
             'GuzzleHttp\\Promise\\' => 19,
             'GuzzleHttp\\' => 11,
         ),
-        'A' => 
+        'A' =>
         array (
             'Automattic\\Jetpack\\Autoloader\\' => 30,
         ),
     );
 
     public static $prefixDirsPsr4 = array (
-        'vipnytt\\' => 
+        'vipnytt\\' =>
         array (
             0 => __DIR__ . '/..' . '/vipnytt/sitemapparser/src',
         ),
-        'Symfony\\Polyfill\\Php80\\' => 
+        'Symfony\\Polyfill\\Php80\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-php80',
         ),
-        'Symfony\\Polyfill\\Mbstring\\' => 
+        'Symfony\\Polyfill\\Mbstring\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-mbstring',
         ),
-        'Symfony\\Component\\Finder\\' => 
+        'Symfony\\Component\\Finder\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/finder',
         ),
-        'Psr\\Http\\Message\\' => 
+        'Psr\\Http\\Message\\' =>
         array (
             0 => __DIR__ . '/..' . '/psr/http-factory/src',
             1 => __DIR__ . '/..' . '/psr/http-message/src',
         ),
-        'Psr\\Http\\Client\\' => 
+        'Psr\\Http\\Client\\' =>
         array (
             0 => __DIR__ . '/..' . '/psr/http-client/src',
         ),
-        'Mustangostang\\' => 
+        'Mustangostang\\' =>
         array (
             0 => __DIR__ . '/..' . '/wp-cli/mustangostang-spyc/src',
         ),
-        'GuzzleHttp\\Psr7\\' => 
+        'GuzzleHttp\\Psr7\\' =>
         array (
             0 => __DIR__ . '/..' . '/guzzlehttp/psr7/src',
         ),
-        'GuzzleHttp\\Promise\\' => 
+        'GuzzleHttp\\Promise\\' =>
         array (
             0 => __DIR__ . '/..' . '/guzzlehttp/promises/src',
         ),
-        'GuzzleHttp\\' => 
+        'GuzzleHttp\\' =>
         array (
             0 => __DIR__ . '/..' . '/guzzlehttp/guzzle/src',
         ),
-        'Automattic\\Jetpack\\Autoloader\\' => 
+        'Automattic\\Jetpack\\Autoloader\\' =>
         array (
             0 => __DIR__ . '/..' . '/automattic/jetpack-autoloader/src',
         ),
     );
 
     public static $prefixesPsr0 = array (
-        'c' => 
+        'c' =>
         array (
-            'cli' => 
+            'cli' =>
             array (
                 0 => __DIR__ . '/..' . '/wp-cli/php-cli-tools/lib',
             ),
         ),
-        'W' => 
+        'W' =>
         array (
-            'WP_CLI\\' => 
+            'WP_CLI\\' =>
             array (
                 0 => __DIR__ . '/..' . '/wp-cli/wp-cli/php',
             ),
         ),
-        'P' => 
+        'P' =>
         array (
-            'Parsedown' => 
+            'Parsedown' =>
             array (
                 0 => __DIR__ . '/..' . '/erusev/parsedown',
             ),
         ),
-        'M' => 
+        'M' =>
         array (
-            'Mustache' => 
+            'Mustache' =>
             array (
-                0 => __DIR__ . '/..' . '/mustache/mustache/src',
+                0 => __DIR__ . '/..' . '/wp-cli/mustache/src',
             ),
         ),
     );
@@ -159,10 +159,13 @@ class ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f
         'GuzzleHttp\\Handler\\CurlFactoryInterface' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/CurlFactoryInterface.php',
         'GuzzleHttp\\Handler\\CurlHandler' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/CurlHandler.php',
         'GuzzleHttp\\Handler\\CurlMultiHandler' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/CurlMultiHandler.php',
+        'GuzzleHttp\\Handler\\CurlShareHandleState' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/CurlShareHandleState.php',
+        'GuzzleHttp\\Handler\\CurlVersion' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/CurlVersion.php',
         'GuzzleHttp\\Handler\\EasyHandle' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/EasyHandle.php',
         'GuzzleHttp\\Handler\\HeaderProcessor' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/HeaderProcessor.php',
         'GuzzleHttp\\Handler\\MockHandler' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/MockHandler.php',
         'GuzzleHttp\\Handler\\Proxy' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/Proxy.php',
+        'GuzzleHttp\\Handler\\ProxyEnvironment' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/ProxyEnvironment.php',
         'GuzzleHttp\\Handler\\StreamHandler' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Handler/StreamHandler.php',
         'GuzzleHttp\\MessageFormatter' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/MessageFormatter.php',
         'GuzzleHttp\\MessageFormatterInterface' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/MessageFormatterInterface.php',
@@ -205,6 +208,7 @@ class ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f
         'GuzzleHttp\\Psr7\\Query' => __DIR__ . '/..' . '/guzzlehttp/psr7/src/Query.php',
         'GuzzleHttp\\Psr7\\Request' => __DIR__ . '/..' . '/guzzlehttp/psr7/src/Request.php',
         'GuzzleHttp\\Psr7\\Response' => __DIR__ . '/..' . '/guzzlehttp/psr7/src/Response.php',
+        'GuzzleHttp\\Psr7\\Rfc3986' => __DIR__ . '/..' . '/guzzlehttp/psr7/src/Rfc3986.php',
         'GuzzleHttp\\Psr7\\Rfc7230' => __DIR__ . '/..' . '/guzzlehttp/psr7/src/Rfc7230.php',
         'GuzzleHttp\\Psr7\\ServerRequest' => __DIR__ . '/..' . '/guzzlehttp/psr7/src/ServerRequest.php',
         'GuzzleHttp\\Psr7\\Stream' => __DIR__ . '/..' . '/guzzlehttp/psr7/src/Stream.php',
@@ -220,41 +224,42 @@ class ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f
         'GuzzleHttp\\RequestOptions' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/RequestOptions.php',
         'GuzzleHttp\\RetryMiddleware' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/RetryMiddleware.php',
         'GuzzleHttp\\TransferStats' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/TransferStats.php',
+        'GuzzleHttp\\TransportSharing' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/TransportSharing.php',
         'GuzzleHttp\\Utils' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/Utils.php',
-        'Mustache_Autoloader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Autoloader.php',
-        'Mustache_Cache' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Cache.php',
-        'Mustache_Cache_AbstractCache' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Cache/AbstractCache.php',
-        'Mustache_Cache_FilesystemCache' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Cache/FilesystemCache.php',
-        'Mustache_Cache_NoopCache' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Cache/NoopCache.php',
-        'Mustache_Compiler' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Compiler.php',
-        'Mustache_Context' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Context.php',
-        'Mustache_Engine' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Engine.php',
-        'Mustache_Exception' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Exception.php',
-        'Mustache_Exception_InvalidArgumentException' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Exception/InvalidArgumentException.php',
-        'Mustache_Exception_LogicException' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Exception/LogicException.php',
-        'Mustache_Exception_RuntimeException' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Exception/RuntimeException.php',
-        'Mustache_Exception_SyntaxException' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Exception/SyntaxException.php',
-        'Mustache_Exception_UnknownFilterException' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Exception/UnknownFilterException.php',
-        'Mustache_Exception_UnknownHelperException' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Exception/UnknownHelperException.php',
-        'Mustache_Exception_UnknownTemplateException' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Exception/UnknownTemplateException.php',
-        'Mustache_HelperCollection' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/HelperCollection.php',
-        'Mustache_LambdaHelper' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/LambdaHelper.php',
-        'Mustache_Loader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Loader.php',
-        'Mustache_Loader_ArrayLoader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Loader/ArrayLoader.php',
-        'Mustache_Loader_CascadingLoader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Loader/CascadingLoader.php',
-        'Mustache_Loader_FilesystemLoader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Loader/FilesystemLoader.php',
-        'Mustache_Loader_InlineLoader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Loader/InlineLoader.php',
-        'Mustache_Loader_MutableLoader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Loader/MutableLoader.php',
-        'Mustache_Loader_ProductionFilesystemLoader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Loader/ProductionFilesystemLoader.php',
-        'Mustache_Loader_StringLoader' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Loader/StringLoader.php',
-        'Mustache_Logger' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Logger.php',
-        'Mustache_Logger_AbstractLogger' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Logger/AbstractLogger.php',
-        'Mustache_Logger_StreamLogger' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Logger/StreamLogger.php',
-        'Mustache_Parser' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Parser.php',
-        'Mustache_Source' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Source.php',
-        'Mustache_Source_FilesystemSource' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Source/FilesystemSource.php',
-        'Mustache_Template' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Template.php',
-        'Mustache_Tokenizer' => __DIR__ . '/..' . '/mustache/mustache/src/Mustache/Tokenizer.php',
+        'Mustache_Autoloader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Autoloader.php',
+        'Mustache_Cache' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Cache.php',
+        'Mustache_Cache_AbstractCache' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Cache/AbstractCache.php',
+        'Mustache_Cache_FilesystemCache' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Cache/FilesystemCache.php',
+        'Mustache_Cache_NoopCache' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Cache/NoopCache.php',
+        'Mustache_Compiler' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Compiler.php',
+        'Mustache_Context' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Context.php',
+        'Mustache_Engine' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Engine.php',
+        'Mustache_Exception' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Exception.php',
+        'Mustache_Exception_InvalidArgumentException' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Exception/InvalidArgumentException.php',
+        'Mustache_Exception_LogicException' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Exception/LogicException.php',
+        'Mustache_Exception_RuntimeException' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Exception/RuntimeException.php',
+        'Mustache_Exception_SyntaxException' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Exception/SyntaxException.php',
+        'Mustache_Exception_UnknownFilterException' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Exception/UnknownFilterException.php',
+        'Mustache_Exception_UnknownHelperException' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Exception/UnknownHelperException.php',
+        'Mustache_Exception_UnknownTemplateException' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Exception/UnknownTemplateException.php',
+        'Mustache_HelperCollection' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/HelperCollection.php',
+        'Mustache_LambdaHelper' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/LambdaHelper.php',
+        'Mustache_Loader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Loader.php',
+        'Mustache_Loader_ArrayLoader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Loader/ArrayLoader.php',
+        'Mustache_Loader_CascadingLoader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Loader/CascadingLoader.php',
+        'Mustache_Loader_FilesystemLoader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Loader/FilesystemLoader.php',
+        'Mustache_Loader_InlineLoader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Loader/InlineLoader.php',
+        'Mustache_Loader_MutableLoader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Loader/MutableLoader.php',
+        'Mustache_Loader_ProductionFilesystemLoader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Loader/ProductionFilesystemLoader.php',
+        'Mustache_Loader_StringLoader' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Loader/StringLoader.php',
+        'Mustache_Logger' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Logger.php',
+        'Mustache_Logger_AbstractLogger' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Logger/AbstractLogger.php',
+        'Mustache_Logger_StreamLogger' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Logger/StreamLogger.php',
+        'Mustache_Parser' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Parser.php',
+        'Mustache_Source' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Source.php',
+        'Mustache_Source_FilesystemSource' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Source/FilesystemSource.php',
+        'Mustache_Template' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Template.php',
+        'Mustache_Tokenizer' => __DIR__ . '/..' . '/wp-cli/mustache/src/Mustache/Tokenizer.php',
         'Mustangostang\\Spyc' => __DIR__ . '/..' . '/wp-cli/mustangostang-spyc/src/Spyc.php',
         'Parsedown' => __DIR__ . '/..' . '/erusev/parsedown/Parsedown.php',
         'PhpToken' => __DIR__ . '/..' . '/symfony/polyfill-php80/Resources/stubs/PhpToken.php',
@@ -309,6 +314,7 @@ class ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f
         'WP_CLI\\Bootstrap\\AutoloaderStep' => __DIR__ . '/..' . '/wp-cli/wp-cli/php/WP_CLI/Bootstrap/AutoloaderStep.php',
         'WP_CLI\\Bootstrap\\BootstrapState' => __DIR__ . '/..' . '/wp-cli/wp-cli/php/WP_CLI/Bootstrap/BootstrapState.php',
         'WP_CLI\\Bootstrap\\BootstrapStep' => __DIR__ . '/..' . '/wp-cli/wp-cli/php/WP_CLI/Bootstrap/BootstrapStep.php',
+        'WP_CLI\\Bootstrap\\CheckRoot' => __DIR__ . '/..' . '/wp-cli/wp-cli/php/WP_CLI/Bootstrap/CheckRoot.php',
         'WP_CLI\\Bootstrap\\ConfigureRunner' => __DIR__ . '/..' . '/wp-cli/wp-cli/php/WP_CLI/Bootstrap/ConfigureRunner.php',
         'WP_CLI\\Bootstrap\\DeclareAbstractBaseCommand' => __DIR__ . '/..' . '/wp-cli/wp-cli/php/WP_CLI/Bootstrap/DeclareAbstractBaseCommand.php',
         'WP_CLI\\Bootstrap\\DeclareFallbackFunctions' => __DIR__ . '/..' . '/wp-cli/wp-cli/php/WP_CLI/Bootstrap/DeclareFallbackFunctions.php',
@@ -396,6 +402,7 @@ class ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f
         'cli\\notify\\Spinner' => __DIR__ . '/..' . '/wp-cli/php-cli-tools/lib/cli/notify/Spinner.php',
         'cli\\progress\\Bar' => __DIR__ . '/..' . '/wp-cli/php-cli-tools/lib/cli/progress/Bar.php',
         'cli\\table\\Ascii' => __DIR__ . '/..' . '/wp-cli/php-cli-tools/lib/cli/table/Ascii.php',
+        'cli\\table\\Column' => __DIR__ . '/..' . '/wp-cli/php-cli-tools/lib/cli/table/Column.php',
         'cli\\table\\Renderer' => __DIR__ . '/..' . '/wp-cli/php-cli-tools/lib/cli/table/Renderer.php',
         'cli\\table\\Tabular' => __DIR__ . '/..' . '/wp-cli/php-cli-tools/lib/cli/table/Tabular.php',
         'cli\\tree\\Ascii' => __DIR__ . '/..' . '/wp-cli/php-cli-tools/lib/cli/tree/Ascii.php',
@@ -410,10 +417,10 @@ class ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f::$prefixDirsPsr4;
-            $loader->prefixesPsr0 = ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f::$prefixesPsr0;
-            $loader->classMap = ComposerStaticInitc5ff1a4b43c4d3b135375c000e31fa2f::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInitac82da05671f4ba36fe5624cf13ec35d::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInitac82da05671f4ba36fe5624cf13ec35d::$prefixDirsPsr4;
+            $loader->prefixesPsr0 = ComposerStaticInitac82da05671f4ba36fe5624cf13ec35d::$prefixesPsr0;
+            $loader->classMap = ComposerStaticInitac82da05671f4ba36fe5624cf13ec35d::$classMap;
 
         }, null, ClassLoader::class);
     }

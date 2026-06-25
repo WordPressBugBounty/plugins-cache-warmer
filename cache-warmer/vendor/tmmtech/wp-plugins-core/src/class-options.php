@@ -93,7 +93,7 @@ final class Options {
      */
     private function validation_option( $option_name ) {
         if ( ! array_key_exists( $option_name, $this->all_options ) ) {
-            throw new Exception( WP_Plugins_Core::$name . ': ' . esc_html__( 'Unknown option name:', 'tmm-wp-plugins-core' ) . ' ' . esc_html( $option_name ) );
+            throw new Exception( WP_Plugins_Core::$name . ': ' . esc_html( 'Unknown option name:' ) . ' ' . esc_html( $option_name ) );
         }
     }
 

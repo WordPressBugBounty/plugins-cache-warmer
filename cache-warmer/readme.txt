@@ -1,8 +1,8 @@
 === Cache Warmer ===
 Contributors: tmmtechnology
 Tags: cache, warming, cloudflare, redis, object cache
-Tested up to: 6.7.0
-Stable tag: 1.3.8
+Tested up to: 7.0.0
+Stable tag: 1.3.9
 Requires PHP: 7.4
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
@@ -58,6 +58,12 @@ Visits website pages to warm (create) the cache if you have any caching solution
 [wp@tmm.ventures](mailto:wp@tmm.ventures)
 
 == Changelog ==
+
+= 1.3.9 2026-06-25 =
+
+#### Compatibility
+
+* Added support for WordPress 7.0.0.
 
 = 1.3.8 2024-11-18 =
 

@@ -1,5 +1,11 @@
 == Changelog ==
 
+= 0.1.53 2025-07-01 =
+
+#### Bugfixes
+
+* Fix a bug with unknown option name being called too early (before 'init') for 'options' class by deleting a translation.
+
 = 0.1.52 2024-09-13 =
 
 #### Enhancements

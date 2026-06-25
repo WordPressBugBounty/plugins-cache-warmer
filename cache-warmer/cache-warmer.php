@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Cache Warmer
  * Description: Visits website pages to warm (create) the cache if you have any caching solutions configured.
- * Version:     1.3.8
+ * Version:     1.3.9
  * Text Domain: cache-warmer
  * Author:      TMM Technology
  * Author URI:  https://tmm.ventures/

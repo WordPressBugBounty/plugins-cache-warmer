@@ -105,7 +105,14 @@ final class WP_Plugins_Core {
 
         $this->define_constants();
         $this->import_plugin_files();
-        $this->load_plugin_textdomain();
+
+        // Translations must be loaded on the `init` hook or later (WP 6.7+).
+        if ( did_action( 'init' ) ) {
+            $this->load_plugin_textdomain();
+        } else {
+            add_action( 'init', [ $this, 'load_plugin_textdomain' ] );
+        }
+
         $this->add_polyfills();
 
         // Options.
@@ -180,8 +187,11 @@ final class WP_Plugins_Core {
 
     /**
      * Loads textdomain.
+     *
+     * Public because it is registered as an `init` action callback (WP 6.7+ requires
+     * translations to be loaded on `init` or later).
      */
-    private function load_plugin_textdomain() {
+    public function load_plugin_textdomain() {
         load_plugin_textdomain(
             'tmm-wp-plugins-core',
             false,

@@ -2,7 +2,7 @@
 Contributors: tmmtechnology
 Tags: cache, warming, cloudflare, redis, object cache
 Tested up to: 7.0.0
-Stable tag: 1.3.9
+Stable tag: 1.3.10
 Requires PHP: 7.4
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
@@ -58,6 +58,12 @@ Visits website pages to warm (create) the cache if you have any caching solution
 [wp@tmm.ventures](mailto:wp@tmm.ventures)
 
 == Changelog ==
+
+= 1.3.10 2026-07-03 =
+
+#### Bugfixes
+
+* Fix "_load_textdomain_just_in_time was called incorrectly" notice by loading translations on the `init` hook (required since WP 6.7).
 
 = 1.3.9 2026-06-25 =
 

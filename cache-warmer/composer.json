@@ -1,0 +1,31 @@
+{
+  "name": "tmmtech/cache-warmer",
+  "type": "wordpress-plugin",
+  "repositories": [
+    {
+      "type": "vcs",
+      "url":  "https://bitbucket.org/tmmtech/wp-plugins-core.git/",
+      "only": ["tmmtech/*"]
+    }
+  ],
+  "require": {
+    "ext-dom": "*",
+    "ext-libxml": "*",
+    "automattic/jetpack-autoloader": "^2.11",
+    "tmmtech/wp-plugins-core": "*",
+    "vipnytt/sitemapparser": "^1.1",
+    "woocommerce/action-scheduler": "^3.6",
+    "wp-cli/wp-cli": "^2.11"
+  },
+  "config": {
+    "optimize-autoloader": true,
+    "sort-packages": true,
+    "preferred-install": "dist",
+    "platform": {
+      "php": "7.4"
+    },
+    "allow-plugins": {
+      "automattic/jetpack-autoloader": true
+    }
+  }
+}

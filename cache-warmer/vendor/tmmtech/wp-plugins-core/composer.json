@@ -8,8 +8,9 @@
   "config": {
     "optimize-autoloader": true,
     "sort-packages": true,
+    "preferred-install": "dist",
     "platform": {
-      "php": "7.4"
+      "php": "8.4"
     },
     "allow-plugins": {
       "automattic/jetpack-autoloader": true

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Cache Warmer
  * Description: Visits website pages to warm (create) the cache if you have any caching solutions configured.
- * Version:     1.3.9
+ * Version:     1.3.10
  * Text Domain: cache-warmer
  * Author:      TMM Technology
  * Author URI:  https://tmm.ventures/
@@ -92,8 +92,12 @@ final class Cache_Warmer {
             function() {
                 new \WP_Plugins_Core\WP_Plugins_Core( $this, false );
 
-                // Load translations.
-                $this->load_plugin_textdomain();
+                // Load translations (on `init` or later, per WP 6.7+).
+                if ( did_action( 'init' ) ) {
+                    $this->load_plugin_textdomain();
+                } else {
+                    add_action( 'init', [ $this, 'load_plugin_textdomain' ] );
+                }
 
                 // Options.
                 self::$options = new Options();
@@ -256,7 +260,7 @@ final class Cache_Warmer {
     /**
      * Loads textdomain.
      */
-    private function load_plugin_textdomain() {
+    public function load_plugin_textdomain() {
         load_plugin_textdomain(
             'cache-warmer',
             false,

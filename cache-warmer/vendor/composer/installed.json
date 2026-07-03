@@ -993,17 +993,17 @@
         },
         {
             "name": "tmmtech/wp-plugins-core",
-            "version": "0.1.53",
-            "version_normalized": "0.1.53.0",
+            "version": "0.1.54",
+            "version_normalized": "0.1.54.0",
             "source": {
                 "type": "git",
                 "url": "https://bitbucket.org/tmmtech/wp-plugins-core.git",
-                "reference": "5af5a2a406d8b68b26686caca1454baf4c262c9f"
+                "reference": "8c3bc9d747ba6ed7504018b71fbccbef6736c27b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://bitbucket.org/tmmtech/wp-plugins-core.git/get/5af5a2a406d8b68b26686caca1454baf4c262c9f.zip",
-                "reference": "5af5a2a406d8b68b26686caca1454baf4c262c9f",
+                "url": "https://bitbucket.org/tmmtech/wp-plugins-core.git/get/8c3bc9d747ba6ed7504018b71fbccbef6736c27b.zip",
+                "reference": "8c3bc9d747ba6ed7504018b71fbccbef6736c27b",
                 "shasum": ""
             },
             "require": {
@@ -1011,12 +1011,12 @@
                 "erusev/parsedown": "^1.7",
                 "symfony/polyfill-mbstring": "*"
             },
-            "time": "2025-06-30T21:39:00+00:00",
+            "time": "2026-07-02T21:30:04+00:00",
             "type": "library",
             "installation-source": "dist",
             "homepage": "https://bitbucket.org/tmmtech/wp-plugins-core",
             "support": {
-                "source": "https://bitbucket.org/tmmtech/wp-plugins-core.git/src/5af5a2a406d8b68b26686caca1454baf4c262c9f/?at=0.1.53"
+                "source": "https://bitbucket.org/tmmtech/wp-plugins-core.git/src/8c3bc9d747ba6ed7504018b71fbccbef6736c27b/?at=0.1.54"
             },
             "install-path": "../tmmtech/wp-plugins-core"
         },

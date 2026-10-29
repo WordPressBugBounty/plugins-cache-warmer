@@ -17,95 +17,170 @@ use WP_Error;
  */
 final class Tree {
 
-    /**
-     * Returns the first link in the tree.
-     *
-     * @param array $array Array.
-     * @param int   $depth Current depth.
-     *
-     * @return array Array where 'link' key is the link, 'depth' key is its depth, 'meta' is the meta.
-     */
-    public static function get_the_first_leaf_data( $array, $depth = 0 ) : array {
-        foreach ( $array as $key => $value ) { // We don't use iteration here of course but just get the first array item.
-            if ( is_array( $value ) && count( $value ) ) {
-                return self::get_the_first_leaf_data( $value, ++ $depth );
-            } else {
-                list( $url, $meta ) = explode( '|', $key );
+	/**
+	 * Read the first terminal entry along the tree's first-child path.
+	 *
+	 * Follows insertion order, descending only into non-empty arrays. Does not
+	 * mutate the tree or persist queue rows. Keys contain a URL and optional
+	 * serialized metadata; missing or non-array metadata becomes an empty array.
+	 * Callers must supply a non-empty tree: empty input reaches the end without
+	 * returning and violates the existing array return type.
+	 *
+	 * @param array $array Non-empty nested tree keyed by URL and serialized metadata.
+	 * @param int   $depth Depth assigned to entries at the current nesting level.
+	 * @return array{link:string,depth:int,meta:array} First leaf's URL, depth and metadata.
+	 * @throws \TypeError When empty input cannot satisfy the array return type.
+	 */
+	public static function get_the_first_leaf_data( $array, $depth = 0 ): array {
+		foreach ( $array as $key => $value ) { // Only the first entry is inspected at each level.
+			if ( is_array( $value ) && count( $value ) ) {
+				return self::get_the_first_leaf_data( $value, ++$depth );
+			} else {
+				list( $url, $meta ) = self::parse_leaf_key( $key );
 
-                return [
-                    'link'  => $url,
-                    'depth' => $depth,
-                    'meta'  => maybe_unserialize( $meta ),
-                ];
-            }
-        }
-    }
+				return array(
+					'link'  => $url,
+					'depth' => $depth,
+					'meta'  => maybe_unserialize( $meta ),
+				);
+			}
+		}
+	}
 
-    /**
-     * Updates the value of the first leaf of the tree.
-     *
-     * @param array $tree      Tree.
-     * @param mixed $children New value.
-     */
-    public static function add_the_first_leaf_children( array &$tree, array $children ) {
-        if ( empty( $tree ) ) {
-            $tree = $children;
-            return;
-        }
+	/**
+	 * Persist a nested child tree beneath an existing warm-up log row.
+	 *
+	 * Decodes each URL/metadata key and delegates idempotent row admission to DB.
+	 * Descendants use the returned child ID, not the original parent ID. Processes
+	 * entries in array order; no transaction or rollback is added here, so an
+	 * exception can leave earlier admissions persisted. Empty input is a no-op.
+	 *
+	 * @param int   $warmup_id Warm-up run ID owning the queue rows.
+	 * @param int   $log_id    Existing parent log row ID.
+	 * @param int   $depth     Parent depth; immediate children use depth plus one.
+	 * @param array $children Nested tree keyed by URL and serialized metadata.
+	 * @return void
+	 * @throws \RuntimeException When queue admission or its process fence fails.
+	 */
+	public static function add_the_first_leaf_children( int $warmup_id, int $log_id, int $depth, array $children ) {
+		foreach ( $children as $child => $child_array ) {
+			list( $url, $meta ) = self::parse_leaf_key( $child );
 
-        foreach ( $tree as &$value ) { // We don't use iteration here of course but just get the first array item.
-            if ( is_array( $value ) && count( $value ) ) {
-                self::add_the_first_leaf_children( $value, $children );
-            } else {
-                $value = $children;
-            }
-            return;
-        }
-    }
+			$new_child_id = DB::create_link_to_warm(
+				$warmup_id,
+				$url,
+				$depth + 1,
+				0,
+				$meta,
+				$log_id
+			);
 
-    /**
-     * Adds siblings to the first leaf at a specified maximum depth.
-     *
-     * @param array $tree       Tree.
-     * @param array $siblings   Siblings to add at the maximum depth.
-     * @param bool  $to_the_end Add siblings to the end of the array, or the beginning.
-     * @param int   $max_depth  Maximum depth at which siblings should be added.
-     * @param int   $current_depth Current depth in the recursion (initially 0).
-     */
-    public static function add_the_first_leaf_siblings( array &$tree, array $siblings, bool $to_the_end = true, int $max_depth = PHP_INT_MAX, int $current_depth = 0 ) {
-        if ( empty( $tree ) ) {
-            $tree = $siblings;
-            return;
-        }
+			if ( $new_child_id && ! empty( $child_array ) ) {
+				self::add_the_first_leaf_children( $warmup_id, $new_child_id, $depth + 1, $child_array );
+			}
+		}
+	}
 
-        if ( $current_depth === $max_depth ) {
-            if ( $to_the_end ) {
-                $tree = array_merge( $tree, $siblings );
-            } else {
-                $tree = array_merge( $siblings, $tree );
-            }
-            return;
-        }
+	/**
+	 * Persist sibling entries and descendants beneath a warm-up log row.
+	 *
+	 * Reverses insertion order at each level when requested. At the recursion
+	 * limit, admits that level's entries but ignores their descendants. Otherwise,
+	 * recurses only when admission returns a nonzero child ID. Delegates duplicate
+	 * handling and process fencing to DB; no transaction or rollback is provided,
+	 * so a later failure can leave earlier rows persisted. Empty input is a no-op.
+	 *
+	 * @param int   $warmup_id     Warm-up run ID owning the admitted rows.
+	 * @param int   $log_id        Parent log row ID for this level's siblings.
+	 * @param int   $depth         Queue depth assigned to this level's entries.
+	 * @param array $siblings      Nested tree keyed by URL and serialized metadata.
+	 * @param bool  $to_the_end    Whether to retain rather than reverse array order.
+	 * @param int   $max_depth     Last recursion level to admit, including that level.
+	 * @param int   $current_depth Current recursion level, initially zero.
+	 * @return void
+	 * @throws \RuntimeException When queue admission or its process fence fails.
+	 */
+	public static function add_the_first_leaf_siblings(
+		int $warmup_id,
+		int $log_id,
+		int $depth,
+		array $siblings,
+		bool $to_the_end = true,
+		int $max_depth = PHP_INT_MAX,
+		int $current_depth = 0
+	) {
+		// If we want to prepend rather than append, reverse the order of $siblings.
+		if ( ! $to_the_end ) {
+			$siblings = array_reverse( $siblings, true );
+		}
 
-        $leaf_found = false;
+		// If we're already at max depth, just insert siblings here.
+		if ( $current_depth >= $max_depth ) {
+			foreach ( $siblings as $sibling_key => $child_array ) {
+				list( $url, $meta ) = self::parse_leaf_key( $sibling_key );
 
-        foreach ( $tree as &$value ) {
-            if ( is_array( $value ) && ! empty( $value ) ) {
-                self::add_the_first_leaf_siblings( $value, $siblings, $to_the_end, $max_depth, $current_depth + 1 );
-            } else {
-                $leaf_found = true;
-                break;
-            }
-        }
+				DB::create_link_to_warm(
+					$warmup_id,
+					$url,
+					$depth,
+					0,
+					$meta,
+					$log_id
+				);
+			}
+			return;
+		}
 
-        if ( $leaf_found && $current_depth < $max_depth - 1 ) {
-            if ( $to_the_end ) {
-                $tree = array_merge( $tree, $siblings );
-            } else {
-                $tree = array_merge( $siblings, $tree );
-            }
-        }
-    }
+		// Otherwise, we have room to recurse deeper.
+		foreach ( $siblings as $sibling_key => $child_array ) {
+			list( $url, $meta ) = self::parse_leaf_key( $sibling_key );
+
+			// Create the sibling row, child of $log_id.
+			$new_sibling_id = DB::create_link_to_warm(
+				$warmup_id,
+				$url,
+				$depth,
+				0,
+				$meta,
+				$log_id
+			);
+
+			// If it has children in the array, recurse.
+			// We pass $new_sibling_id as the parent for these children.
+			if ( $new_sibling_id && ! empty( $child_array ) ) {
+				self::add_the_first_leaf_siblings(
+					$warmup_id,
+					$new_sibling_id,
+					$depth + 1,
+					$child_array,
+					$to_the_end,
+					$max_depth,
+					$current_depth + 1
+				);
+			}
+		}
+	}
+
+	/**
+	 * Decode one trusted internal URL/serialized-metadata key.
+	 *
+	 * Splits only on the first pipe, preserving pipes inside the metadata suffix.
+	 * Missing, invalid or non-array metadata becomes an empty array. This is not
+	 * a URL validator or an untrusted-input decoder: WordPress unserialization
+	 * runs before the array check and can invoke serialized objects' magic methods.
+	 *
+	 * @param string $key Tree key generated by Leaf_Only_Subtree.
+	 * @return array{0:string,1:array} Unmodified URL prefix and decoded array metadata.
+	 */
+	private static function parse_leaf_key( string $key ): array {
+		$parts = explode( '|', $key, 2 );
+		$meta  = isset( $parts[1] ) ? maybe_unserialize( $parts[1] ) : array();
+
+		return array(
+			$parts[0],
+			is_array( $meta ) ? $meta : array(),
+		);
+	}
 
     /**
      * Deletes the first leaf of the tree.

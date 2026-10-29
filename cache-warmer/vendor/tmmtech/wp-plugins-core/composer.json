@@ -1,9 +1,50 @@
 {
   "name": "tmmtech/wp-plugins-core",
+  "description": "Shared runtime primitives and administration components for TMM WordPress plugins.",
+  "license": "GPL-3.0-or-later",
   "require": {
     "automattic/jetpack-autoloader": "^2.11",
     "erusev/parsedown": "^1.7",
-    "symfony/polyfill-mbstring": "*"
+    "symfony/polyfill-mbstring": "^1.27"
+  },
+  "scripts": {
+    "tests:dependencies": "composer --working-dir=tests/Dependencies install --no-interaction --no-scripts --no-plugins",
+    "test": [
+      "Composer\\Config::disableProcessTimeout",
+      "@tests:dependencies @no_additional_args",
+      "pnpm exec wp-plugin-test test --"
+    ],
+    "test:integration": [
+      "Composer\\Config::disableProcessTimeout",
+      "@tests:dependencies @no_additional_args",
+      "pnpm exec wp-plugin-test integration --"
+    ],
+    "test:all": [
+      "Composer\\Config::disableProcessTimeout",
+      "@tests:dependencies @no_additional_args",
+      "pnpm test:unit --runInBand @no_additional_args",
+      "pnpm exec wp-plugin-test all --"
+    ],
+    "test:release": [
+      "Composer\\Config::disableProcessTimeout",
+      "@tests:dependencies @no_additional_args",
+      "pnpm exec wp-plugin-test release --"
+    ],
+    "test:package": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test package"
+    ],
+    "test:compatibility": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test compatibility"
+    ],
+    "tests:inventory": "pnpm exec wp-plugin-test-inventory",
+    "test:coverage": [
+      "Composer\\Config::disableProcessTimeout",
+      "@tests:dependencies @no_additional_args",
+      "pnpm exec wp-plugin-test coverage --"
+    ],
+    "tests:inventory:check": "pnpm exec wp-plugin-test-inventory --check"
   },
   "config": {
     "optimize-autoloader": true,

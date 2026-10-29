@@ -126,7 +126,13 @@ final class Options {
         }
 
         $option_data = $this->all_options[ $option_name ];
-        return get_option( $this->get_real_option_name( $option_name ), array_key_exists( 'default', $option_data ) ? $option_data['default'] : false );
+        $autoload    = array_key_exists( 'autoload', $option_data ) ? $option_data['autoload'] : true;
+
+        return Consistent_Options::get(
+            $this->get_real_option_name( $option_name ),
+            array_key_exists( 'default', $option_data ) ? $option_data['default'] : false,
+            $autoload
+        );
     }
 
     /**
@@ -146,8 +152,43 @@ final class Options {
         }
 
         $option_data = $this->all_options[ $option_name ];
-        update_option( $this->get_real_option_name( $option_name ), $value, array_key_exists( 'autoload', $option_data ) ? $option_data['autoload'] : null );
+        Consistent_Options::set(
+            $this->get_real_option_name( $option_name ),
+            $value,
+            array_key_exists( 'autoload', $option_data ) ? $option_data['autoload'] : true
+        );
     }
+
+	/**
+	 * Transforms a plugin-owned option under the shared Core option lock.
+	 *
+	 * Every read/modify/write caller must use this method, with the same option
+	 * identity, to coordinate across requests and independent node caches. The
+	 * replacement is persisted before this method returns.
+	 *
+	 * @param string   $option_name Option name, with or without the Core prefix.
+	 * @param callable $mutator     Receives the current value and returns its replacement.
+	 * @return mixed Persisted replacement value returned by the mutator.
+	 * @throws Exception When the option name is not registered for this consumer.
+	 * @throws \RuntimeException When the lock, database read, or database write fails.
+	 */
+	public function mutate( $option_name, callable $mutator ) {
+		try {
+			$this->validation_option( $option_name );
+		} catch ( Exception $e ) {
+			$option_name = WP_Plugins_Core::$slug . '-' . $option_name;
+			$this->validation_option( $option_name );
+		}
+
+		$option_data = $this->all_options[ $option_name ];
+		return Consistent_Options::mutate(
+			WP_Plugins_Core::$slug,
+			$this->get_real_option_name( $option_name ),
+			$mutator,
+			array_key_exists( 'default', $option_data ) ? $option_data['default'] : false,
+			array_key_exists( 'autoload', $option_data ) ? $option_data['autoload'] : true
+		);
+	}
 
     /**
      * Deletes the option value.
@@ -164,6 +205,10 @@ final class Options {
             $this->validation_option( $option_name );
         }
 
-        delete_option( $this->get_real_option_name( $option_name ) );
+        $option_data = $this->all_options[ $option_name ];
+        Consistent_Options::delete(
+            $this->get_real_option_name( $option_name ),
+            array_key_exists( 'autoload', $option_data ) ? $option_data['autoload'] : true
+        );
     }
 }

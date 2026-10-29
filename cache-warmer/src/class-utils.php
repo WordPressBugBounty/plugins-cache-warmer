@@ -45,39 +45,44 @@ final class Utils {
         return $merged;
     }
 
-    /**
-     * Get the latest post data.
-     *
-     * @param int $post_id Post ID.
-     *
-     * @return object
-     */
-    public static function get_post_latest_data( $post_id ) {
-        global $wpdb;
+	/**
+	 * Builds display data from a post's newest persisted warm-up log row.
+	 *
+	 * The shared plugin table is read directly so the publish box observes current
+	 * cross-node state. Missing rows and unchecked database read failures both
+	 * produce dash placeholders. Nullable timing columns also remain placeholders,
+	 * while numeric zero is rendered as a duration rather than treated as absent.
+	 *
+	 * @param int $post_id Post ID whose latest log row should be displayed.
+	 * @return object{log_date:mixed,log_extra:mixed,log_depth:mixed,log_time_spent:string,log_time_afterwards:string} Display-ready fields.
+	 */
+	public static function get_post_latest_data( $post_id ) {
+		global $wpdb;
 
-        $table_name = DB::get_tables_prefix() . 'warm_ups_logs';
+		$table_name = DB::get_tables_prefix() . 'warm_ups_logs';
 
-        $query = $wpdb->prepare(
-            "
-                SELECT * FROM $table_name
+		$post_data = $wpdb->get_row(
+			$wpdb->prepare(
+				'
+                SELECT * FROM %i
                 WHERE log_post_id = %d
                 ORDER BY `id` DESC LIMIT 1
-            ",
-            $post_id
-        );
+			',
+				$table_name,
+				$post_id
+			)
+		);
 
-        $post_data = $wpdb->get_row( $query ); // @codingStandardsIgnoreLine
-
-        return (object) [
-            'log_date'            => $post_data ? $post_data->log_date : '-',
-            'log_extra'           => $post_data ? $post_data->log_extra : '-',
-            'log_depth'           => $post_data ? $post_data->log_depth : '-',
-            /* translators: %s is the number of seconds. */
-            'log_time_spent'      => $post_data ? sprintf( __( '%s s', 'cache-warmer' ), $post_data->log_time_spent ) : '-',
-            /* translators: %s is the number of seconds. */
-            'log_time_afterwards' => $post_data ? sprintf( __( '%s s', 'cache-warmer' ), $post_data->log_time_afterwards ) : '-',
-        ];
-    }
+		return (object) array(
+			'log_date'            => $post_data ? $post_data->log_date : '-',
+			'log_extra'           => $post_data ? $post_data->log_extra : '-',
+			'log_depth'           => $post_data ? $post_data->log_depth : '-',
+			/* translators: %s is the number of seconds. */
+			'log_time_spent'      => $post_data && null !== $post_data->log_time_spent ? sprintf( __( '%s s', 'cache-warmer' ), $post_data->log_time_spent ) : '-',
+			/* translators: %s is the number of seconds. */
+			'log_time_afterwards' => $post_data && null !== $post_data->log_time_afterwards ? sprintf( __( '%s s', 'cache-warmer' ), $post_data->log_time_afterwards ) : '-',
+		);
+	}
 
     /**
      * Schedule the undrifting interval.
@@ -108,8 +113,8 @@ final class Utils {
                 $prev_interval_val_option_name .= wp_json_encode( $args );
             }
 
-            $prev_next_run_time = (int) get_option( $next_run_time_option_name );
-            $prev_interval_val  = (int) get_option( $prev_interval_val_option_name );
+			$prev_next_run_time = (int) Cache_Warmer::$options->get_dynamic( $next_run_time_option_name );
+			$prev_interval_val  = (int) Cache_Warmer::$options->get_dynamic( $prev_interval_val_option_name );
 
             if ( ! $prev_next_run_time ) {
                 $next_run_time = $current_time + $interval_in_seconds;
@@ -127,8 +132,8 @@ final class Utils {
                 }
             }
 
-            update_option( $next_run_time_option_name, $next_run_time );
-            update_option( $prev_interval_val_option_name, $interval_in_seconds );
+			Cache_Warmer::$options->set_dynamic( $next_run_time_option_name, $next_run_time );
+			Cache_Warmer::$options->set_dynamic( $prev_interval_val_option_name, $interval_in_seconds );
 
             Action_Scheduler::schedule_single_action(
                 $next_run_time,

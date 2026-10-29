@@ -114,7 +114,7 @@ final class Setting_Fields {
             $description = '<p class="description">' . wp_kses_post( $description ) . '</p>';
         }
 
-        $tooltip_html = '<p class="description">' . $tooltip_html . '</p>';
+		$tooltip_html = '<p class="description">' . wp_kses_post( $tooltip_html ) . '</p>';
 
         return array(
             'description'  => $description,
@@ -122,15 +122,22 @@ final class Setting_Fields {
         );
     }
 
-    /**
-     * Outputs setting fields.
-     *
-     * Loops through the options array and outputs each field.
-     *
-     * @param array[] $options Opens array to output.
-     *
-     * @see \WC_Admin_Settings::output_fields
-     */
+	/**
+	 * Outputs settings-table controls from consumer-owned field definitions.
+	 *
+	 * Radio option labels allow post-safe formatting and embedded input controls
+	 * with a limited attribute set. Consumers must escape persisted input values
+	 * before constructing labels; sanitization removes executable attributes and
+	 * alternate form targets, but cannot distinguish an unescaped value from markup.
+	 * Custom HTML field types remain responsible for their own output escaping.
+	 *
+	 * @param array<int, array<string, mixed>|null> $options Field definitions. Each
+	 *     nonempty entry requires a type; id, title, value/default and other keys
+	 *     depend on that type. Empty entries and entries without type are skipped.
+	 * @return void Outputs markup directly; does not persist settings.
+	 *
+	 * @see \WC_Admin_Settings::output_fields
+	 */
     public static function output_fields( $options ) {
         foreach ( $options as $value ) {
             if ( ! $value ) {
@@ -324,11 +331,7 @@ final class Setting_Fields {
                                     <option value="<?php echo esc_attr( $key ); ?>"
                                         <?php
 
-                                        if ( is_array( $option_value ) ) {
-                                            selected( in_array( (string) $key, $option_value, true ), true );
-                                        } else {
-                                            selected( $option_value, (string) $key );
-                                        }
+										echo wp_kses( self::selected( $key, $option_value ), array() );
 
                                         ?>
                                     ><?php echo esc_html( $val ); ?></option>
@@ -372,7 +375,33 @@ final class Setting_Fields {
                                             class="<?php echo esc_attr( $value['class'] ); ?>"
                                             <?php echo implode( ' ', $custom_attributes ); ?>
                                             <?php checked( $key, $option_value ); ?>
-                                            /> <?php echo $val; ?></label>
+											/>
+											<?php
+											// Labels may contain consumer-owned text controls. Preserve their
+											// escaped values, but never event handlers or alternate form targets.
+											echo wp_kses(
+												$val,
+												array_merge(
+													wp_kses_allowed_html( 'post' ),
+													array(
+														'input' => array(
+															'type'        => true,
+															'name'        => true,
+															'id'          => true,
+															'class'       => true,
+															'style'       => true,
+															'value'       => true,
+															'placeholder' => true,
+															'disabled'    => true,
+															'readonly'    => true,
+															'maxlength'   => true,
+															'size'        => true,
+														),
+													)
+												)
+											);
+											?>
+										</label>
                                     </li>
                                     <?php
                                 }
@@ -504,7 +533,29 @@ final class Setting_Fields {
                             <label><?php echo esc_html( $value['title'] ); ?> <?php echo $tooltip_html; ?></label>
                         </th>
                         <td class="forminp">
-                            <?php echo str_replace( ' id=', " data-placeholder='" . esc_attr__( 'Select a page&hellip;', 'first-party-analytics' ) . "' style='" . $value['css'] . "' class='" . $value['class'] . "' id=", wp_dropdown_pages( $args ) ); ?> <?php echo $description; ?>
+							<?php
+							echo wp_kses(
+								str_replace(
+									' id=',
+									" data-placeholder='" . esc_attr__( 'Select a page&hellip;', 'first-party-analytics' ) . "' style='" . esc_attr( $value['css'] ) . "' class='" . esc_attr( $value['class'] ) . "' id=",
+									wp_dropdown_pages( $args )
+								),
+								array(
+									'select' => array(
+										'name'             => true,
+										'id'               => true,
+										'class'            => true,
+										'style'            => true,
+										'data-placeholder' => true,
+									),
+									'option' => array(
+										'value'    => true,
+										'selected' => true,
+									),
+								)
+							);
+							echo wp_kses_post( $description );
+							?>
                         </td>
                     </tr>
                     <?php

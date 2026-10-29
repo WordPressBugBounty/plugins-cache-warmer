@@ -2,10 +2,11 @@
 /**
  * Plugin Name: Cache Warmer
  * Description: Visits website pages to warm (create) the cache if you have any caching solutions configured.
- * Version:     1.3.10
+ * Version:     1.4.3
  * Text Domain: cache-warmer
  * Author:      TMM Technology
  * Author URI:  https://tmm.ventures/
+ * Requires at least: 6.5
  * Requires PHP: 7.4
  * License:     GPLv3
  * License URI: https://www.gnu.org/licenses/gpl-3.0.html
@@ -77,15 +78,21 @@ final class Cache_Warmer {
         'simplexml',
     ];
 
-    /**
-     * Constructor.
-     */
+	/**
+	 * Register lifecycle cleanup immediately and defer normal runtime startup.
+	 *
+	 * Deactivation registration must also work when WordPress includes this
+	 * entry point after plugins_loaded during a cold activation. A single checked
+	 * cleanup callback owns deactivation; interval-specific unschedule methods
+	 * remain available for ordinary setting changes, not lifecycle cleanup.
+	 */
     public function __construct() {
         $this->define_constants();
         $this->import_plugin_files();
 
-        // Schedule intervals.
-        new Intervals_Scheduler();
+		// Register activation and maintenance hooks before plugins_loaded.
+		register_deactivation_hook( CACHE_WARMER_FILE, array( Scheduler_Cleanup::class, 'run' ) );
+		new Intervals_Scheduler();
 
         add_action(
             'plugins_loaded',
@@ -104,6 +111,7 @@ final class Cache_Warmer {
 
                 // Handle version update.
                 $this->handle_version_update();
+                Migrations::resume_pending_legacy_transfer();
 
                 // The plugin is being updated notice.
                 if ( self::$version !== self::$options->get( 'last-handled-version-update' ) ) {
@@ -201,9 +209,14 @@ final class Cache_Warmer {
         self::$version = CACHE_WARMER_VERSION;
     }
 
-    /**
-     * Imports plugin files.
-     */
+	/**
+	 * Load maintained runtime classes and bundled dependencies once per request.
+	 *
+	 * Includes the standalone scheduler cleanup used by the early deactivation
+	 * hook; loading classes here does not initialize options or run migrations.
+	 *
+	 * @return void
+	 */
     private function import_plugin_files() {
         $src_files = [
             'assets/class-assets',
@@ -218,6 +231,7 @@ final class Cache_Warmer {
             'class-summary',
             'class-logging',
             'class-databases',
+            'class-queue-lifecycle',
             'class-options',
             'class-settings-export',
             'class-interval',
@@ -229,12 +243,12 @@ final class Cache_Warmer {
             'class-url-validation',
             'class-debug',
             'class-utils',
-            'class-object-cache',
             'class-server-ip-detection',
             'class-migrations',
             'class-clear-old-actions',
             'class-external-warmer',
             'class-intervals-scheduler',
+			'class-scheduler-cleanup',
             'class-extend-wp-cli',
             'posts-warming/class-posts-enqueue',
             'posts-warming/class-posts-warming-interval',
@@ -284,23 +298,45 @@ final class Cache_Warmer {
         return array_merge( $action_links, $links );
     }
 
-    /**
-     * Handles version update.
-     */
-    private function handle_version_update() {
-        if ( time() - MINUTE_IN_SECONDS > (int) get_option( 'cache-warmer-updating' ) ) {
-            $last_handled_version_update = self::$options->get( 'last-handled-version-update' );
-            if ( self::$version !== $last_handled_version_update ) {
-                update_option( 'cache-warmer-updating', time() );
+	/**
+	 * Apply pending schema and version migrations under the site migration lock.
+	 *
+	 * Returns without work if the lock is unavailable or both the plugin version
+	 * and migration count are current. Runs version-specific migrators and stores
+	 * the handled version only when the schema success marker is exactly 1.
+	 * A migrator may defer scheduler-dependent work behind its own checkpoint;
+	 * the version marker is not proof that such deferred work has finished.
+	 *
+	 * After acquiring the lock, always attempts to remove the old updating option
+	 * and release the lock in finally. Schema and option writes are not rolled
+	 * back here when a later operation fails.
+	 *
+	 * @return void
+	 *
+	 * @throws \Exception When an option or migration dependency reports failure.
+	 */
+	private function handle_version_update() {
+		if ( ! DB::acquire_migration_lock() ) {
+			return;
+		}
 
-                DB::do_migrations();
-                new Migrations( $last_handled_version_update );
+		try {
+			$last_handled_version_update = self::$options->get( 'last-handled-version-update' );
+			if ( self::$version === $last_handled_version_update && count( DB::get_migrations() ) === (int) self::$options->get( 'last-db-success-migration-number' ) ) {
+				return;
+			}
 
-                self::$options->set( 'last-handled-version-update', self::$version );
-                delete_option( 'cache-warmer-updating' );
-            }
-        }
-    }
+			DB::do_migrations();
+
+			if ( '1' === (string) self::$options->get( 'last-db-migration-success' ) ) {
+				new Migrations( $last_handled_version_update );
+				self::$options->set( 'last-handled-version-update', self::$version );
+			}
+		} finally {
+			delete_option( 'cache-warmer-updating' );
+			DB::release_migration_lock();
+		}
+	}
 
     /**
      * Adds the dashboard metrics widget.

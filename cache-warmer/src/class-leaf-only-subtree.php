@@ -209,40 +209,43 @@ final class Leaf_Only_Subtree {
         );
     }
 
-    /**
-     * Returns the subtree with the post-formatted nodes.
-     *
-     * @param array $links                                Links.
-     * @param array $url_params                           URL params.
-     * @param bool  $visit_second_time_without_url_params Visit second time without URL params (if they are set).
-     * @param bool  $visit_second_time_without_cookies    Visit second time without cookies (if they are set).
-     * @param bool  $rewrite_to_https                     Rewrite HTTP links to HTTPS.
-     * @param array $user_agents                          The list of user agents, to visit each page with.
-     *
-     * @return array Correctly formatted links for the tree considering current settings (passed params).
-     *
-     * @throws Exception Exception.
-     */
-    public static function get(
-        $links,
-        $url_params,
-        $visit_second_time_without_url_params,
-        bool $visit_second_time_without_cookies,
-        bool $rewrite_to_https,
-        array $user_agents
-    ) {
-        return self::delete_retrieved_links_from_subtree(
-            self::add_links_meta(
-                self::update_url_params_and_second_time_visit(
-                    self::rewrite_to_https( self::create_a_subtree_array_from_links( $links ), $rewrite_to_https ),
-                    $url_params,
-                    $visit_second_time_without_url_params
-                ),
-                $user_agents,
-                $visit_second_time_without_cookies
-            )
-        );
-    }
+	/**
+	 * Build leaf nodes for the requested URL and request-metadata variants.
+	 *
+	 * Optionally rewrites HTTP to HTTPS, adds configured query parameters to
+	 * page URLs and retains a visit without those additions when requested.
+	 * Expands each resulting URL for every User-Agent and optional cookie-free visit. Identical
+	 * keys collapse through PHP array assignment; no completed-log lookup, queue
+	 * persistence or HTTP request occurs here. An empty User-Agent list yields
+	 * an empty result. Callers supply valid absolute URLs and parameter records.
+	 *
+	 * @param string[] $links                                Absolute URLs to expand.
+	 * @param array    $url_params                           Records with name and optional value; omitted values become 1.
+	 * @param bool     $visit_second_time_without_url_params Retain an unmodified page URL when parameters are configured.
+	 * @param bool     $visit_second_time_without_cookies    Add a variant with visit_without_cookies metadata.
+	 * @param bool     $rewrite_to_https                     Rewrite HTTP URL schemes to HTTPS before expansion.
+	 * @param string[] $user_agents                          User-Agent values for separate visits.
+	 *
+	 * @return array Empty child arrays keyed by URL, a pipe and serialized request metadata.
+	 */
+	public static function get(
+		$links,
+		$url_params,
+		$visit_second_time_without_url_params,
+		bool $visit_second_time_without_cookies,
+		bool $rewrite_to_https,
+		array $user_agents
+	) {
+		return self::add_links_meta(
+			self::update_url_params_and_second_time_visit(
+				self::rewrite_to_https( self::create_a_subtree_array_from_links( $links ), $rewrite_to_https ),
+				$url_params,
+				$visit_second_time_without_url_params
+			),
+			$user_agents,
+			$visit_second_time_without_cookies
+		);
+	}
 
     /**
      * Creates an array for links where value is an array and key is the link.
@@ -256,28 +259,6 @@ final class Leaf_Only_Subtree {
         foreach ( $links as $link ) {
             $array[ $link ] = [];
         }
-        return $array;
-    }
-
-    /**
-     * Deletes retrieved links from the array of the links.
-     *
-     * @param array $array Links.
-     *
-     * @return array Array of links without the retrieved ones.
-     *
-     * @throws Exception Exception.
-     */
-    private static function delete_retrieved_links_from_subtree( array $array ) {
-        $retrieved_links = Cache_Warmer::$options->get( 'cache-warmer-retrieved-links' );
-        foreach ( array_keys( $array ) as $link ) {
-            if ( array_key_exists( $link, $retrieved_links ) ||
-                array_key_exists( $link . '/', $retrieved_links )
-            ) {
-                unset( $array[ $link ] );
-            }
-        }
-
         return $array;
     }
 

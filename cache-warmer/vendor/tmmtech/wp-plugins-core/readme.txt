@@ -1,5 +1,41 @@
 == Changelog ==
 
+= 0.1.58 2026-10-29 =
+
+#### Bugfixes
+
+* Prevent repeatedly failed notification jobs from restarting immediately on every request.
+* Reserve bounded shared-database retry backoff before notification requests, including concurrent delivery and interrupted workers.
+* Bound notification response sizes and error messages while retaining the last valid notifications and existing scheduler history.
+
+= 0.1.57 2026-10-12 =
+
+#### Bugfixes
+
+* Preserve embedded domain input controls in radio labels while continuing to remove executable markup and unsafe form attributes.
+
+= 0.1.56 2026-10-12 =
+
+#### Bugfixes
+
+* Authorize and route notification dismissals to the correct plugin, validate notification IDs and preserve concurrent dismissals.
+* Preserve the last valid notification feed when remote responses fail validation.
+* Preserve pending scheduled work during duplicate repair and isolate scheduling groups.
+* Report option deletion failures and correct shared settings rendering and persistence.
+
+#### Enhancements
+
+* Add coordinated option mutation and expand shared administration and scheduling regression coverage.
+
+= 0.1.55 2026-09-07 =
+
+#### Enhancements
+
+* Add shared database locks, database-authoritative options and guarded migrations for load-balanced WordPress installations.
+* Group the new helpers under `src/load-balancer-support/`, retaining their `WP_Plugins_Core` class names and public APIs.
+* Coordinate Action Scheduler duplicate checks through the shared database and restore object-cache state after scheduling.
+* Add isolated automated integration, coverage and package/compatibility tests for shared coordination.
+
 = 0.1.54 2026-07-03 =
 
 #### Bugfixes

@@ -12,263 +12,434 @@ namespace Cache_Warmer;
  */
 final class Logging {
 
-    /**
-     * Returns User-Agent ID.
-     *
-     * @param string $value A User-Agent string (trimmed to 500 characters).
-     *
-     * @return int Meta ID.
-     */
-    private static function get_user_agent_id( string $value ): int {
-        global $wpdb;
+	/**
+	 * Registers a User-Agent value and returns its database identifier.
+	 *
+	 * Uses the unique value key to reuse an existing row through LAST_INSERT_ID.
+	 * The database write is independent of the subsequent log write. Query
+	 * errors are not checked here; the connection's insert ID is returned as-is.
+	 *
+	 * @param string $value User-Agent string, truncated to its first 500 bytes.
+	 *
+	 * @return int Database insert ID; not an independently verified success result.
+	 */
+	private static function get_user_agent_id( string $value ): int {
+		global $wpdb;
 
-        $table_name = DB::get_tables_prefix() . 'warm_ups_user_agents';
+		$table_name = DB::get_tables_prefix() . 'warm_ups_user_agents';
 
-        $value = substr( $value, 0, 500 );
+		$value = substr( $value, 0, 500 );
 
-        // 1. Check if the row exists.
-
-        $existing_id = (int) $wpdb->get_var( // @codingStandardsIgnoreLine
-            $wpdb->prepare(
-                "
-                SELECT id 
-                FROM $table_name 
-                WHERE value = %s
-                ",
-                $value
-            )
-        );
-
-        // If the row exists, return its ID.
-        if ( $existing_id ) {
-            return $existing_id;
-        }
-
-        // 2. Add the row if it doesn't exist.
-
-        $wpdb->query( // @codingStandardsIgnoreLine
-            $wpdb->prepare(
-                "
-                    INSERT IGNORE INTO $table_name (
+		$wpdb->query( // @codingStandardsIgnoreLine
+			$wpdb->prepare(
+				'
+                    INSERT INTO %i (
                        `value`
                    )
                     VALUES (
                         %s
                     )
-                ",
-                $value
-            )
-        );
+                    ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+                ',
+				$table_name,
+				$value
+			)
+		);
 
-        return $wpdb->insert_id;
-    }
+		return $wpdb->insert_id;
+	}
 
-    /**
-     * Logs a warming entity.
-     *
-     * @param string     $warmed_at                 The date of the warm-up start.
-     * @param bool       $log_is_success            Whether the log is for successful or failed fetch.
-     * @param int        $log_depth                 The depth of the URL that was fetched.
-     * @param float|null $log_fetch_time            Time spent to fetch the page.
-     * @param float|null $afterwards_fetch_time     Time spent to fetch the page after the warming.
-     * @param string     $log_url                   The URL that was fetched.
-     * @param string     $log_extra                 Extra log information (for success - page code (usually 200), for failure - error description).
-     * @param int        $log_phase                 Log phase. @see Cache_Warmer\DB::get_schema() method for description of this column.
-     * @param string     $user_agent                User-agent the page was visited with.
-     * @param array      $external_warmer_results   External warmer results.
-     * @param string     $log_content_type          Content type.
-     * @param string     $log_content_length        Content length.
-     * @param string     $log_cf_cache_status       "cf-cache-status" response header.
-     * @param string     $log_wp_super_cache_status "X-WP-Super-Cache" response header.
-     * @param string     $x_cache_header            "x-cache" response header.
-     * @param string     $visit_type                There can be 3 visit types: 'before', 'after' and '' (default: for success - another request after the main is done when typing headers are lacking; for failure - nothing else is done, obviously).
-     * @param string     $canonical                 Canonical on the page, which leads to a different URL.
-     */
-    private static function log(
-        $warmed_at,
-        $log_is_success,
-        $log_depth,
-        $log_fetch_time,
-        $afterwards_fetch_time,
-        $log_url,
-        $log_extra,
-        $log_phase = 0,
-        $user_agent = '',
-        array $external_warmer_results = [],
-        $log_content_type = '',
-        $log_content_length = '',
-        $log_cf_cache_status = '',
-        $log_wp_super_cache_status = '',
-        $x_cache_header = '',
-        $visit_type = '',
-        string $canonical = ''
-    ) {
-        global $wpdb;
+	/**
+	 * Appends a warming log row and registers its User-Agent.
+	 *
+	 * Resolves the URL's WordPress post ID, serializes result and link metadata,
+	 * and stores the link hash used by queue admission. A null completion date
+	 * leaves the row pending. The insert honors the current process fence and
+	 * checks lock ownership afterward. There is no transaction here: User-Agent
+	 * registration or a completed insert can persist even if a later step fails.
+	 *
+	 * @param int     $warmup_id                 Warmup ID.
+	 * @param bool    $log_is_success            Whether the log is for successful or failed fetch.
+	 * @param int     $log_depth                 The depth of the URL that was fetched.
+	 * @param ?float  $log_fetch_time            Time spent to fetch the page.
+	 * @param ?float  $afterwards_fetch_time     Time spent to fetch the page after the warming.
+	 * @param string  $log_url                   The URL that was fetched.
+	 * @param string  $log_extra                 Extra log information (for success - page code (usually 200), for failure - error description).
+	 * @param int     $log_phase                 Log phase. @see Cache_Warmer\DB::get_schema() method for description of this column.
+	 * @param string  $user_agent                User-agent the page was visited with.
+	 * @param array   $external_warmer_results   External warmer results.
+	 * @param string  $log_content_type          Content type.
+	 * @param string  $log_content_length        Content length.
+	 * @param string  $log_cf_cache_status       "cf-cache-status" response header.
+	 * @param string  $log_wp_super_cache_status "X-WP-Super-Cache" response header.
+	 * @param string  $x_cache_header            "x-cache" response header.
+	 * @param string  $visit_type                There can be 3 visit types: 'before', 'after' and '' (default: for success - another request after the main is done when typing headers are lacking; for failure - nothing else is done, obviously).
+	 * @param string  $canonical                 Canonical on the page, which leads to a different URL.
+	 * @param ?array  $link_meta                 Link meta.
+	 * @param ?string $warm_date                 Warm date.
+	 * @param ?int    $parent_log_id             Parent log ID.
+	 *
+	 * @return int|false Newly inserted log ID, or false on failure.
+	 *
+	 * @throws \RuntimeException When the post-insert ownership check detects a lost lock.
+	 */
+	public static function log(
+		int $warmup_id,
+		bool $log_is_success,
+		int $log_depth,
+		?float $log_fetch_time,
+		?float $afterwards_fetch_time,
+		string $log_url,
+		string $log_extra = '',
+		int $log_phase = 0,
+		string $user_agent = '',
+		array $external_warmer_results = array(),
+		string $log_content_type = '',
+		string $log_content_length = '',
+		string $log_cf_cache_status = '',
+		string $log_wp_super_cache_status = '',
+		string $x_cache_header = '',
+		string $visit_type = '',
+		string $canonical = '',
+		?array $link_meta = array(),
+		?string $warm_date = null,
+		?int $parent_log_id = null
+	) {
+		global $wpdb;
 
-        $table_name = DB::get_tables_prefix() . 'warm_ups_logs';
+		$table_name = DB::get_tables_prefix() . 'warm_ups_logs';
 
-        $log_date       = wp_date( 'Y-m-d H:i:s' );
-        $log_is_success = (int) $log_is_success;
+		$log_date       = wp_date( 'Y-m-d H:i:s' );
+		$log_is_success = (int) $log_is_success;
 
-        $warm_up_id = DB::get_warm_up_id_from_warm_up_date( $warmed_at );
-        if ( ! $warm_up_id ) {
-            $warm_up_id = self::create_a_warm_up( $warmed_at ); // This line is added to avoid problems when logs are cleaned during the currently running warm-up.
-        }
+		// Resolve the post ID.
+		$post_id = url_to_postid( $log_url );
 
-        // Post ID.
+		// Convert null fetch times to 'NULL' literal for the SQL statement.
+		$log_time_spent_value            = null === $log_fetch_time ? 'NULL' : $log_fetch_time;
+		$log_time_spent_afterwards_value = null === $afterwards_fetch_time ? 'NULL' : $afterwards_fetch_time;
+		$warm_date_value                 = null === $warm_date ? 'NULL' : "'" . esc_sql( $warm_date ) . "'";
+		$parent_log_id_value             = null === $parent_log_id ? 'NULL' : $parent_log_id;
+		$link_meta_json                  = wp_json_encode( $link_meta );
+		$link_hash                       = DB::get_link_hash( $log_url, (array) $link_meta );
 
-        $post_id = url_to_postid( $log_url );
+		$user_agent_id = self::get_user_agent_id( $user_agent );
+		$fence         = DB::process_fence();
 
-        $log_time_spent_value            = null === $log_fetch_time ? 'NULL' : $log_fetch_time;
-        $log_time_spent_afterwards_value = null === $afterwards_fetch_time ? 'NULL' : $afterwards_fetch_time;
-
-        $query = $wpdb->prepare(
-            "
-                INSERT INTO $table_name (
-                   list_id, log_is_success, log_date, log_depth, log_url, log_post_id,
-                   log_time_spent, log_time_afterwards, log_extra, log_phase, log_content_type, log_content_length, 
-                   log_cf_cache_status, log_wp_super_cache_status, log_x_cache_header, log_visit_type, user_agent_id, canonical,
-                   external_warmer_results
-               )
-                VALUES (
+		$query = $wpdb->prepare(
+			"
+                INSERT INTO %i (
+                    list_id, log_is_success, log_date, log_depth, log_url, log_post_id,
+                    log_time_spent, log_time_afterwards, log_extra, log_phase, log_content_type, log_content_length,
+                    log_cf_cache_status, log_wp_super_cache_status, log_x_cache_header, log_visit_type, user_agent_id,
+                    canonical, external_warmer_results, link_meta, warm_date, parent_log_id, link_hash
+                )
+                SELECT
                     %d, %d, %s, %d, %s, %d,
                     $log_time_spent_value, $log_time_spent_afterwards_value, %s, %d, %s, %s,
-                    %s, %s, %s, %s, %s, %s,
-                    %s
-                )
+                    %s, %s, %s, %s, %d,
+                    %s, %s, %s, $warm_date_value, $parent_log_id_value, %s
+                WHERE $fence
             ",
-            $warm_up_id,
-            $log_is_success,
-            $log_date,
-            $log_depth,
-            $log_url,
-            $post_id,
-            $log_extra,
-            $log_phase,
-            $log_content_type,
-            $log_content_length,
-            $log_cf_cache_status,
-            $log_wp_super_cache_status,
-            $x_cache_header,
-            $visit_type,
-            self::get_user_agent_id( $user_agent ),
-            $canonical,
-            wp_json_encode( $external_warmer_results ),
-        );
+			$table_name,
+			$warmup_id,
+			$log_is_success,
+			$log_date,
+			$log_depth,
+			$log_url,
+			$post_id,
+			$log_extra,
+			$log_phase,
+			$log_content_type,
+			$log_content_length,
+			$log_cf_cache_status,
+			$log_wp_super_cache_status,
+			$x_cache_header,
+			$visit_type,
+			$user_agent_id,
+			$canonical,
+			wp_json_encode( $external_warmer_results ),
+			$link_meta_json,
+			$link_hash
+		);
 
-        $wpdb->query( $query ); // @codingStandardsIgnoreLine
-    }
+		// Execute the query and check for failure.
+		$result = $wpdb->query( $query ); // @codingStandardsIgnoreLine
+		DB::assert_process_lock();
 
-    /**
-     * Logs successful link retrieval.
-     *
-     * @param string     $link                      Link.
-     * @param string     $warm_up_id                The ID of the warm-up.
-     * @param string     $depth                     Depth.
-     * @param float|null $fetch_time                Time spent to fetch the page.
-     * @param float|null $afterwards_fetch_time     Time spent to fetch the page after the warming.
-     * @param string     $response_code             Response code.
-     * @param int        $log_phase                 Log phase. @see Cache_Warmer\DB::get_schema() method for description of this column.
-     * @param string     $user_agent                User-agent the page was visited with.
-     * @param array      $external_warmer_results   External warmer results.
-     * @param string     $log_content_type          Content type.
-     * @param string     $log_content_length        Content length.
-     * @param string     $log_cf_cache_status       "cf-cache-status" response header.
-     * @param string     $log_wp_super_cache_status "X-WP-Super-Cache" response header.
-     * @param string     $x_cache_header            "x-cache" response header.
-     * @param string     $visit_type                There can be 3 visit types: 'before', 'after' and '' (default: for success - another request after the main is done when typing headers are lacking; for failure - nothing else is done, obviously).
-     * @param string     $canonical                 Canonical on the page, which leads to a different URL.
-     */
-    public static function log_success(
-        $link,
-        $warm_up_id,
-        $depth,
-        $fetch_time,
-        $afterwards_fetch_time,
-        $response_code,
-        $log_phase = 0,
-        $user_agent = '',
-        array $external_warmer_results = [],
-        $log_content_type = '',
-        $log_content_length = '',
-        $log_cf_cache_status = '',
-        $log_wp_super_cache_status = '',
-        $x_cache_header = '',
-        $visit_type = '',
-        string $canonical = ''
-    ) {
-        self::log(
-            $warm_up_id,
-            1,
-            $depth,
-            $fetch_time,
-            $afterwards_fetch_time,
-            $link,
-            $response_code,
-            $log_phase,
-            $user_agent,
-            $external_warmer_results,
-            $log_content_type,
-            $log_content_length,
-            $log_cf_cache_status,
-            $log_wp_super_cache_status,
-            $x_cache_header,
-            $visit_type,
-            $canonical,
-        );
-    }
+		if ( false === $result ) {
+			return false;
+		}
 
-    /**
-     * Logs failed link retrieval.
-     *
-     * @param string     $link              Link.
-     * @param string     $warm_up_id        The ID of the warm-up.
-     * @param string     $depth             Depth.
-     * @param float|null $fetch_time        Time spent to fetch the page.
-     * @param string     $error_description Error description.
-     * @param int        $log_phase         Log phase. @see Cache_Warmer\DB::get_schema() method for description of this column.
-     * @param string     $user_agent        User-agent the page was visited with.
-     * @param array      $external_warmer_results External warmer results.
-     */
-    public static function log_failure(
-        $link,
-        $warm_up_id,
-        $depth,
-        $fetch_time,
-        $error_description,
-        $log_phase = 0,
-        $user_agent = '',
-        array $external_warmer_results = []
-    ) {
-        self::log(
-            $warm_up_id,
-            0,
-            $depth,
-            $fetch_time,
-            null,
-            $link,
-            $error_description,
-            $log_phase,
-            $user_agent,
-            $external_warmer_results
-        );
-    }
+		// Return the newly inserted log row's ID.
+		return $wpdb->insert_id;
+	}
 
-    /**
-     * Returns the logs list, sorted by name (date).
-     *
-     * @return string[] Logs list.
-     */
-    public static function get_warm_ups_logs_list() {
-        global $wpdb;
+	/**
+	 * Inserts a completed log row that was processed outside the database queue.
+	 *
+	 * External warmer jobs do not have a pending queue row to update. Resolves
+	 * or creates their shared external warm-up list, then appends a result with
+	 * depth and phase zero and the current site-local completion date. Repeated
+	 * calls append separate results; this method does not deduplicate requests.
+	 *
+	 * List creation, User-Agent registration and result insertion are separate
+	 * writes without a transaction here. Earlier writes can survive a later
+	 * failure. No HTTP request is made and no pending queue row is updated.
+	 *
+	 * @param bool       $success                 Whether the request succeeded.
+	 * @param string     $link                    Logged link, including any caller-supplied server prefix.
+	 * @param float|null $fetch_time              Fetch duration, or null when unavailable.
+	 * @param string     $extra                   Response code or error.
+	 * @param string     $user_agent              User-Agent.
+	 * @param array      $external_warmer_results External warmer results serialized as JSON by the log writer.
+	 * @param string     $content_type            Content-Type header.
+	 * @param string     $content_length          Content-Length header.
+	 * @param string     $cf_cache_status         Cloudflare cache status.
+	 * @param string     $wp_super_cache_status   WP Super Cache status.
+	 * @param string     $x_cache_header          X-Cache header.
+	 *
+	 * @return int|false Log writer's insert ID, or false if no list ID is obtained
+	 *                   or the result insert reports a database error.
+	 *
+	 * @throws \RuntimeException When the log writer detects lost process-lock ownership.
+	 */
+	public static function log_external_result(
+		bool $success,
+		string $link,
+		?float $fetch_time,
+		string $extra,
+		string $user_agent = '',
+		array $external_warmer_results = array(),
+		string $content_type = '',
+		string $content_length = '',
+		string $cf_cache_status = '',
+		string $wp_super_cache_status = '',
+		string $x_cache_header = ''
+	) {
+		$warmup_id = DB::get_warm_up_id( External_Warmer::WARMUP_ID );
 
-        $table_name = DB::get_tables_prefix() . 'warm_ups_list';
-        $results    = $wpdb->get_results( "SELECT warmed_at FROM $table_name ORDER BY warmed_at DESC;", ARRAY_A ); // @codingStandardsIgnoreLine
+		if ( ! $warmup_id ) {
+			$warmup_id = DB::create_or_update_a_warm_up( External_Warmer::WARMUP_ID, array() );
+		}
 
-        $to_exclude = [ '0000-00-00 00:00:00', '2000-01-01 00:00:00' ]; // Exclude warm-up 0 which for unscheduled warm-ups.
+		if ( ! $warmup_id ) {
+			return false;
+		}
 
-        return $results ? array_diff( array_column( $results, 'warmed_at' ), $to_exclude ) : [];
-    }
+		return self::log(
+			$warmup_id,
+			$success,
+			0,
+			$fetch_time,
+			null,
+			$link,
+			$extra,
+			0,
+			$user_agent,
+			$external_warmer_results,
+			$content_type,
+			$content_length,
+			$cf_cache_status,
+			$wp_super_cache_status,
+			$x_cache_header,
+			'',
+			'',
+			array(),
+			wp_date( 'Y-m-d H:i:s' )
+		);
+	}
+
+	/**
+	 * Marks an existing, non-cancelled log row as successfully retrieved.
+	 *
+	 * Registers the User-Agent, writes response metadata and the current
+	 * site-local completion date, and checks process-lock ownership after the
+	 * fenced update. These writes are not wrapped in a transaction here.
+	 *
+	 * @param int    $log_id                    Log ID.
+	 * @param ?float $fetch_time                Time spent to fetch the page.
+	 * @param ?float $afterwards_fetch_time     Time spent to fetch the page after the warming.
+	 * @param string $response_code             Response code.
+	 * @param int    $log_phase                 Log phase. @see Cache_Warmer\DB::get_schema() method for description of this column.
+	 * @param string $user_agent                User-agent the page was visited with.
+	 * @param array  $external_warmer_results   External warmer results.
+	 * @param string $log_content_type          Content type.
+	 * @param string $log_content_length        Content length.
+	 * @param string $log_cf_cache_status       "cf-cache-status" response header.
+	 * @param string $log_wp_super_cache_status "X-WP-Super-Cache" response header.
+	 * @param string $x_cache_header            "x-cache" response header.
+	 * @param string $visit_type                There can be 3 visit types: 'before', 'after' and '' (default: for success - another request after the main is done when typing headers are lacking; for failure - nothing else is done, obviously).
+	 * @param string $canonical                 Canonical on the page, which leads to a different URL.
+	 *
+	 * @return bool Whether exactly one row changed. False also covers a missing
+	 *              or cancelled row and an update that changes no stored values.
+	 *
+	 * @throws \Exception When the database update fails, or its RuntimeException
+	 *                    subclass when the post-update check detects a lost lock.
+	 */
+	public static function log_success(
+		int $log_id,
+		?float $fetch_time,
+		?float $afterwards_fetch_time,
+		string $response_code,
+		int $log_phase = 0,
+		string $user_agent = '',
+		array $external_warmer_results = array(),
+		string $log_content_type = '',
+		string $log_content_length = '',
+		string $log_cf_cache_status = '',
+		string $log_wp_super_cache_status = '',
+		string $x_cache_header = '',
+		string $visit_type = '',
+		string $canonical = ''
+	) {
+		global $wpdb;
+
+		$table_name = DB::get_tables_prefix() . 'warm_ups_logs';
+
+		$fetch_time            = null === $fetch_time ? 'NULL' : $fetch_time;
+		$afterwards_fetch_time = null === $afterwards_fetch_time ? 'NULL' : $afterwards_fetch_time;
+		$fence                 = DB::process_fence();
+
+		$result = $wpdb->query(
+			$wpdb->prepare(
+				"
+                    UPDATE %i
+					SET `log_is_success` = 1,
+						`log_time_spent` = $fetch_time,
+                        `log_time_afterwards` = $afterwards_fetch_time,
+                        `log_extra` = %s,
+                        `log_phase` = %d,
+                        `user_agent_id` = %d,
+                        `external_warmer_results` = %s,
+                        `log_content_type` = %s,
+                        `log_content_length` = %s,
+                        `log_cf_cache_status` = %s,
+                        `log_wp_super_cache_status` = %s,
+                        `log_x_cache_header` = %s,
+                        `log_visit_type` = %s,
+                        `canonical` = %s,
+                        `warm_date` = %s
+                    WHERE `id` = %d AND `is_cancelled` = 0 AND $fence
+                ",
+				$table_name,
+				$response_code,
+				$log_phase,
+				self::get_user_agent_id( $user_agent ),
+				wp_json_encode( $external_warmer_results ),
+				$log_content_type,
+				$log_content_length,
+				$log_cf_cache_status,
+				$log_wp_super_cache_status,
+				$x_cache_header,
+				$visit_type,
+				$canonical,
+				wp_date( 'Y-m-d H:i:s' ),
+				$log_id
+			)
+		);
+
+		DB::assert_process_lock();
+		if ( false === $result ) {
+			throw new \Exception( 'Failed to persist a successful warm-up result.' );
+		}
+
+		return 1 === $result;
+	}
+
+	/**
+	 * Completes one active queue row with a failed retrieval result.
+	 *
+	 * Writes the failure metadata only when the row remains uncancelled and the
+	 * current worker still owns its process fence. A zero-row update returns false
+	 * for a missing, cancelled, stale, or value-identical row. Database errors and
+	 * lost process ownership are promoted to exceptions; no retry row is created by
+	 * this method itself.
+	 *
+	 * @param int        $log_id                  Numeric queue-log row ID.
+	 * @param float|null $fetch_time               Request duration, or null when unavailable.
+	 * @param string     $error_description        Operator-facing failure detail.
+	 * @param int        $log_phase                Retry phase; see `DB::get_schema()`.
+	 * @param string     $user_agent               User agent associated with the visit.
+	 * @param array      $external_warmer_results External assistance results encoded as JSON.
+	 *
+	 * @return bool Whether exactly one active row changed.
+	 *
+	 * @throws \Exception When the database update fails, or its RuntimeException
+	 *                    subclass when the ownership check fails.
+	 */
+	public static function log_failure(
+		int $log_id,
+		?float $fetch_time,
+		string $error_description,
+		int $log_phase = 0,
+		string $user_agent = '',
+		array $external_warmer_results = array()
+	) {
+		global $wpdb;
+
+		$table_name = DB::get_tables_prefix() . 'warm_ups_logs';
+
+		$fetch_time = null === $fetch_time ? 'NULL' : $fetch_time;
+		$fence      = DB::process_fence();
+
+		$result = $wpdb->query(
+			$wpdb->prepare(
+				"
+                    UPDATE %i
+                    SET `log_time_spent` = $fetch_time,
+                        `log_time_afterwards` = NULL,
+                        `log_extra` = %s,
+                        `log_phase` = %d,
+                        `user_agent_id` = %d,
+                        `external_warmer_results` = %s,
+                        `warm_date` = %s
+                    WHERE `id` = %d AND `is_cancelled` = 0 AND $fence
+                ",
+				$table_name,
+				$error_description,
+				$log_phase,
+				self::get_user_agent_id( $user_agent ),
+				wp_json_encode( $external_warmer_results ),
+				wp_date( 'Y-m-d H:i:s' ),
+				$log_id
+			)
+		);
+
+		DB::assert_process_lock();
+		if ( false === $result ) {
+			throw new \Exception( 'Failed to persist a failed warm-up result.' );
+		}
+
+		return 1 === $result;
+	}
+
+	/**
+	 * Read scheduled run identifiers, newest public start date first.
+	 *
+	 * Excludes triggered and external containers, without requiring completion
+	 * or any logged visits. Reads current database state without a local cache.
+	 * No rows and a database read failure both return an empty array; errors are
+	 * not promoted to exceptions and no persistent state is changed.
+	 *
+	 * @return string[] Scheduled warmed_at identifiers in descending date order.
+	 */
+	public static function get_warm_ups_logs_list() {
+		global $wpdb;
+
+		$table_name = DB::get_tables_prefix() . 'warm_ups_list';
+		$results    = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT warmed_at FROM %i WHERE warmup_type = %s ORDER BY warmed_at DESC;',
+				$table_name,
+				DB::WARMUP_TYPE_SCHEDULED
+			),
+			ARRAY_A
+		);
+
+		return $results ? array_column( $results, 'warmed_at' ) : array();
+	}
 
     /**
      * Returns logs list HTML.
@@ -295,54 +466,78 @@ final class Logging {
      */
     const LOGS_PER_PAGE = 100;
 
-    /**
-     * Returns log content.
-     *
-     * @param string $warmed_at File name to get the log content for.
-     * @param int    $page       For which page to retrieve the content.
-     *
-     * @return array Log content.
-     */
-    public static function get_log_content( $warmed_at, $page = 1 ) {
-        global $wpdb;
+	/**
+	 * Read one page of completed, non-cancelled visits for a run or aggregate.
+	 *
+	 * Zero and the zero-date sentinel aggregate all triggered runs; selectors
+	 * beginning with the external date aggregate external containers. Other
+	 * values select an exact public warmed_at identifier. Reads current rows
+	 * in ascending log ID order, including failed and skipped visits but not
+	 * pending or zero-completion-date rows. User-Agent and run fields are joined.
+	 *
+	 * For after-check visits, copies the measured duration to log_time_afterwards
+	 * and clears log_time_spent in the returned array only. Pagination is not
+	 * clamped here. An empty or failed database result ultimately yields an empty
+	 * array; the existing foreach can emit a warning for a non-iterable failure.
+	 * Does not cache results, throw a read-failure exception or persist changes.
+	 *
+	 * @param string|int $warmed_at Public run identifier or legacy aggregate selector.
+	 * @param int        $page      Intended one-based page number; no range validation is performed here.
+	 * @return array[] Associative visit rows with normalized after-check timings.
+	 */
+	public static function get_log_content( $warmed_at, $page = 1 ) {
+		global $wpdb;
 
-        $offset = ( $page - 1 ) * self::LOGS_PER_PAGE;
-        $limit  = self::LOGS_PER_PAGE;
+		$offset = ( $page - 1 ) * self::LOGS_PER_PAGE;
+		$limit  = self::LOGS_PER_PAGE;
 
-        $logs_table        = DB::get_tables_prefix() . 'warm_ups_logs';
-        $list_table        = DB::get_tables_prefix() . 'warm_ups_list';
-        $user_agents_table = DB::get_tables_prefix() . 'warm_ups_user_agents';
+		$logs_table        = DB::get_tables_prefix() . 'warm_ups_logs';
+		$list_table        = DB::get_tables_prefix() . 'warm_ups_list';
+		$user_agents_table = DB::get_tables_prefix() . 'warm_ups_user_agents';
 
-        $results = $wpdb->get_results( // @codingStandardsIgnoreLine
-            $wpdb->prepare(
-                "
+		if ( in_array( (string) $warmed_at, array( '0', '0000-00-00 00:00:00' ), true ) ) {
+			$list_condition = $wpdb->prepare( 'list.warmup_type = %s', DB::WARMUP_TYPE_UNSCHEDULED );
+		} elseif ( External_Warmer::WARMUP_ID === substr( (string) $warmed_at, 0, 10 ) ) {
+			$list_condition = $wpdb->prepare( 'list.warmup_type = %s', DB::WARMUP_TYPE_EXTERNAL );
+		} else {
+			$list_condition = $wpdb->prepare( 'list.warmed_at = %s', $warmed_at );
+		}
+
+		$results = $wpdb->get_results(
+			$wpdb->prepare(
+				"
                     SELECT 
                         logs.*,
                         list.warmed_at,
                         user_agents.value AS user_agent
-                    FROM $logs_table AS logs
-                    LEFT JOIN $list_table AS list ON logs.list_id = list.id
-                    LEFT JOIN $user_agents_table AS user_agents ON logs.user_agent_id = user_agents.id
-                    WHERE list.warmed_at = %s
+                    FROM %i AS logs
+                    LEFT JOIN %i AS list ON logs.list_id = list.id
+                    LEFT JOIN %i AS user_agents ON logs.user_agent_id = user_agents.id
+                    WHERE $list_condition
+                    AND logs.warm_date IS NOT NULL
+                    AND logs.warm_date != '0000-00-00 00:00:00'
+					AND logs.is_cancelled = 0
                     ORDER BY logs.id ASC
                     LIMIT %d OFFSET %d
                 ",
-                $warmed_at,
-                $limit,
-                $offset
-            ),
-            ARRAY_A
-        ); // @codingStandardsIgnoreLine
+				$logs_table,
+				$list_table,
+				$user_agents_table,
+				$limit,
+				$offset
+			),
+			ARRAY_A
+		);
 
-        foreach ( $results as &$result ) { // If log visit type is "after" then it has obviously afterwards visit time.
-            if ( 'after' === $result['log_visit_type'] ) {
-                $result['log_time_afterwards'] = $result['log_time_spent'];
-                $result['log_time_spent']      = '';
-            }
-        }
+		foreach ( $results as &$result ) { // If log visit type is "after" then it has obviously afterwards visit time.
+			if ( 'after' === $result['log_visit_type'] ) {
+				$result['log_time_afterwards'] = $result['log_time_spent'];
+				$result['log_time_spent']      = '';
+			}
+		}
 
-        return $results ? $results : [];
-    }
+		return $results ? $results : array();
+	}
 
     /**
      * Returns the ID the latest warm-up.
@@ -544,7 +739,7 @@ final class Logging {
                             foreach ( $servers as $server ) {
                                 echo '<th>' . esc_html__( 'External Warmer', 'cache-warmer' ) .
                                     '<br>' . esc_html__( '(seconds)', 'cache-warmer' ) .
-                                    '<br><br>' . strtoupper( $server ) . '<br>' .
+                                    '<br><br>' . esc_html( strtoupper( $server ) ) . '<br>' .
                                     '</th>';
                             }
                         }
@@ -588,7 +783,7 @@ final class Logging {
                         <td>
                         <a href="
                         <?php
-                        echo esc_attr(
+                        echo esc_url(
                             External_Warmer::WARMUP_ID !== $warmed_at_first_part ? $log_entity['log_url'] : explode( ' ', $log_entity['log_url'] )[1]
                         );
                         ?>
@@ -633,14 +828,18 @@ final class Logging {
 
                             if ( false !== $server_index ) {
                                 $external_warmer_result = $external_warmer_results[ $server_index ];
+                                // Older versions could persist malformed status values.
+                                $external_warmer_status = is_string( $external_warmer_result['status'] ?? null ) ?
+                                    $external_warmer_result['status'] : __( 'Invalid external server response', 'cache-warmer' );
+                                $external_warmer_succeeded = 200 === $external_warmer_result['code'] && 'processed' === $external_warmer_status;
 
-                                echo '<td class="' . ( 200 !== $external_warmer_result['code'] ? 'cache-warmer-log-failure' : '' ) . '">' .
+                                echo '<td class="' . ( $external_warmer_succeeded ? '' : 'cache-warmer-log-failure' ) . '">' .
                                     '<span class="cache-warmer-popup-message" data-popup-message="' . esc_attr( wp_date( 'Y-m-d H:i:s', $external_warmer_result['at'] ) ) . '">' . esc_html(
-                                        200 === $external_warmer_result['code'] ?
+                                        $external_warmer_succeeded ?
                                             $external_warmer_result['time'] :
                                             (
-                                            $external_warmer_result['status'] ?
-                                                $external_warmer_result['status'] :
+                                            $external_warmer_status ?
+                                                $external_warmer_status :
                                                 '-'
                                             )
                                     ) . '</span></td>';
@@ -651,8 +850,8 @@ final class Logging {
                         ?>
                         <td>
                         <?php
-                            // @codingStandardsIgnoreLine
-                            echo $log_entity['log_extra']; // No escaping for a purpose: Because we print HTML.
+                            // Keep diagnostic links and formatting without executing remote markup.
+                            echo wp_kses_post( $log_entity['log_extra'] );
                         ?>
                         </td>
                         <?php if ( $has_content_type ) : ?>
@@ -763,116 +962,5 @@ final class Logging {
 
         <?php
         return ob_get_clean();
-    }
-
-    /**
-     * Creates a warm-up.
-     *
-     * @param string $warm_up_start_date Warm-up start date (ID).
-     *
-     * @return int ID of the inserted warm-up.
-     */
-    public static function create_a_warm_up( $warm_up_start_date ) {
-        global $wpdb;
-
-        $prev = $wpdb->suppress_errors( true );
-
-        $table_name = DB::get_tables_prefix() . 'warm_ups_list';
-
-        // Delete excess warm-ups, according to the "For how many days to keep the logs" setting.
-        self::delete_excess_warm_ups( $warm_up_start_date );
-
-        $wpdb->query( // @codingStandardsIgnoreLine
-            $wpdb->prepare(
-                "INSERT INTO $table_name (warmed_at) VALUES (%s);",
-                $warm_up_start_date
-            )
-        );
-
-        $wpdb->suppress_errors( $prev );
-
-        return $wpdb->insert_id;
-    }
-
-    /**
-     * Delete excess warm-ups.
-     *
-     * @param string $warm_up_start_date War up ID which is being created.
-     */
-    public static function delete_excess_warm_ups( string $warm_up_start_date ) {
-        global $wpdb;
-
-        $for_how_many_days_to_retain_warm_ups = (int) Cache_Warmer::$options->get( 'setting-for-how-many-days-to-keep-the-logs' );
-        $list_table                           = DB::get_tables_prefix() . 'warm_ups_list';
-        $logs_table                           = DB::get_tables_prefix() . 'warm_ups_logs';
-        $user_agents_table                    = DB::get_tables_prefix() . 'warm_ups_user_agents';
-
-        $date_threshold = wp_date( 'Y-m-d H:i:s', time() - DAY_IN_SECONDS * max( 1, $for_how_many_days_to_retain_warm_ups ) );
-
-        if ( 0 === $for_how_many_days_to_retain_warm_ups ) {
-            $wpdb->query( // Retain only the current one.
-                $wpdb->prepare(
-                    "
-                        DELETE FROM $list_table
-                        WHERE warmed_at NOT IN (%s, '0000-00-00 00:00:00', '2000-01-01')
-                    ",
-                    $warm_up_start_date
-                )
-            );
-        } else {
-            $wpdb->query(
-                $wpdb->prepare(
-                    "
-                    DELETE FROM $list_table
-                    WHERE warmed_at < %s
-                    AND warmed_at NOT IN ('0000-00-00 00:00:00', '2000-01-01')
-                    ",
-                    $date_threshold
-                )
-            );
-        }
-
-        // Delete unscheduled.
-
-        $wpdb->query(
-            $wpdb->prepare(
-                "
-                        DELETE $list_table
-                        FROM $list_table
-                        INNER JOIN $logs_table ON $list_table.id = $logs_table.list_id
-                        WHERE $logs_table.log_date < %s
-                        AND $list_table.warmed_at = '0000-00-00 00:00:00'
-                        ",
-                $date_threshold
-            )
-        );
-
-        // Delete External Warmups.
-
-        $wpdb->query(
-            $wpdb->prepare(
-                "
-                        DELETE $list_table
-                        FROM $list_table
-                        INNER JOIN $logs_table ON $list_table.id = $logs_table.list_id
-                        WHERE $logs_table.log_date < %s
-                        AND $list_table.warmed_at = '2000-01-01 00:00:00'
-                        ",
-                $date_threshold
-            )
-        );
-
-        // Delete user agents with no references.
-
-        $wpdb->query(
-            "
-            DELETE FROM $user_agents_table
-            WHERE id NOT IN (
-                SELECT DISTINCT user_agent_id
-                FROM $logs_table
-                WHERE user_agent_id IS NOT NULL
-            );
-            "
-        );
     }
 }

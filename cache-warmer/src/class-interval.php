@@ -15,15 +15,6 @@ use Exception;
 final class Interval {
 
     /**
-     * Constructor.
-     */
-    public function __construct() {
-
-        // Unschedule interval action on plugin deactivation.
-        register_deactivation_hook( CACHE_WARMER_FILE, [ __CLASS__, 'unschedule' ] );
-    }
-
-    /**
      * Schedules the interval action if it isn't scheduled.
      *
      * @param int $value The new interval value. If false, uses the option.

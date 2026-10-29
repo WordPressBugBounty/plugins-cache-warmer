@@ -2,7 +2,8 @@
 Contributors: tmmtechnology
 Tags: cache, warming, cloudflare, redis, object cache
 Tested up to: 7.0.0
-Stable tag: 1.3.10
+Stable tag: 1.4.3
+Requires at least: 6.5
 Requires PHP: 7.4
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
@@ -27,7 +28,7 @@ Visits website pages to warm (create) the cache if you have any caching solution
 - Visit pages second time without custom URL params (if they are set);
 - Warm-up posts (on their publication and edit (Can be seen in Logs -> Triggered)):
  - Set custom posts warming interval.
-- Use object cache for tree storage, when it's available.
+- Store warm-up queues in MySQL so scheduled work is safe across interchangeable web nodes.
 
 == Additional ==
 
@@ -58,6 +59,57 @@ Visits website pages to warm (create) the cache if you have any caching solution
 [wp@tmm.ventures](mailto:wp@tmm.ventures)
 
 == Changelog ==
+
+= 1.4.3 2026-10-30 =
+
+#### Bugfixes
+
+* Update bundled WP Plugins Core to 0.1.58 with bounded notification retries and recovery; notification fetching remains disabled in this plugin.
+
+= 1.4.2 2026-10-29 =
+
+#### Bugfixes
+
+* Recover a missing database table when the saved migration checkpoint is already ahead, preserving surviving tables and retry progress.
+* Keep the main administration page and migration diagnostics accessible while a database upgrade or status read is unavailable.
+
+= 1.4.1 2026-10-13 =
+
+#### Bugfixes
+
+* Preserve pending warm-up work and recovery state when queue discovery, persistence, or scheduler cleanup fails.
+* Update shared settings and scheduler recovery support to WP Plugins Core 0.1.57.
+
+= 1.4.0 2026-08-17 =
+
+#### Enhancements
+
+* Store active warming queues in indexed database rows instead of large serialized options.
+* Make warm-up processing recoverable across PHP requests and prioritize scheduled warming over post-triggered warming.
+* Add a unified Codeception and wp-browser regression suite covering queues, migrations, HTTP outcomes, content discovery, scheduling, external warming, post-triggered warming, reporting, options, and AJAX authorization.
+
+#### Bugfixes
+
+* Prevent overlapping workers from processing the same queued page.
+* Retry failed pages once and preserve scheduled and post-triggered queues independently.
+* Isolate every post-triggered batch so repeated edits cannot suppress later warming requests.
+* Make manual cancellation compatible with strict SQL modes and resume independent triggered queues afterward.
+* Reconcile missing columns and indexes on legacy log tables.
+* Keep external-warmer logging compatible with the database-backed queue.
+* Correctly recognize extensionless pages inside dotted directory names.
+* Parse complete CSS `@import` URLs instead of truncating them to one character.
+* Record newly discovered failed URLs as failures when no pending queue row exists.
+
+#### Security
+
+* Require administrator capability checks in addition to nonces for every plugin AJAX action.
+* Update Guzzle to the patched release covered by the current security advisories.
+
+= 1.3.11 2026-07-15 =
+
+#### Security
+
+* Update Guzzle dependencies to prevent URL credentials from reaching origin servers.
 
 = 1.3.10 2026-07-03 =
 

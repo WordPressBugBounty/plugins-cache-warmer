@@ -19,20 +19,23 @@ final class Intervals_Scheduler {
      */
     const INTERVAL_HOOK_NAME = 'cache_warmer_fix_missing_intervals';
 
-    /**
-     * Constructor.
-     */
+	/**
+	 * Register activation recovery and periodic maintenance for the active plugin.
+	 *
+	 * Deactivation is handled once by the bootstrap's checked cleanup callback.
+	 */
     public function __construct() {
 
         // Schedule the intervals on plugin activation.
         register_activation_hook( CACHE_WARMER_FILE, [ __CLASS__, 'activation_handler'] );
-        $this->post_activation_handler();
+		if ( Cache_Warmer::$options instanceof Options ) {
+			$this->post_activation_handler();
+		} elseif ( ! did_action( 'plugins_loaded' ) ) {
+			add_action( 'plugins_loaded', [ $this, 'post_activation_handler' ], 20 );
+		}
 
         // Schedule the interval to fix missing intervals.
         add_action( 'init', [ __CLASS__, 'schedule' ] );
-
-        // Unschedule interval action on plugin deactivation.
-        register_deactivation_hook( CACHE_WARMER_FILE, [ __CLASS__, 'unschedule' ] );
 
         // A handler to fix missing intervals.
         add_action( self::INTERVAL_HOOK_NAME, [ __CLASS__, 'fix_missing_intervals' ] );
@@ -72,14 +75,18 @@ final class Intervals_Scheduler {
      * Site post-activation handler.
      */
     public function post_activation_handler() {
+		if ( ! Cache_Warmer::$options instanceof Options ) {
+			return;
+		}
+
         if (
             isset( $_GET['activate'] ) ||
-            'no' !== get_option( 'cache-warmer-intervals-scheduling-post-activation-handled' )
+			'no' !== Cache_Warmer::$options->get_dynamic( 'cache-warmer-intervals-scheduling-post-activation-handled' )
         ) {
             return;
         }
 
-        delete_option( 'cache-warmer-intervals-scheduling-post-activation-handled' );
+		Cache_Warmer::$options->delete_dynamic( 'cache-warmer-intervals-scheduling-post-activation-handled' );
 
         // Schedules intervals.
 
@@ -100,5 +107,6 @@ final class Intervals_Scheduler {
         Clear_Old_Actions::schedule();
         Posts_Warming_Interval::schedule();
         External_Warmer::schedule_for_all_domains();
+        Queue_Lifecycle::schedule_recovery();
     }
 }

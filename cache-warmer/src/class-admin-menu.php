@@ -89,6 +89,27 @@ final class Admin_Menu {
         add_action( 'load-' . $logs_menu_slug, $integrations_admin_notices );
     }
 
+	/**
+	 * Read main-screen status without making a storage failure fatal to the UI.
+	 *
+	 * Incomplete schema migrations do not query the new queue or schedule work.
+	 * Runtime read failures remain visible as unavailable, never as completion.
+	 * Worker and AJAX callers retain the original throwing status method.
+	 *
+	 * @return string Warm-up state, 'updating', or 'unavailable'.
+	 */
+	public static function get_main_screen_state(): string {
+		try {
+			if ( '1' !== (string) Cache_Warmer::$options->get( 'last-db-migration-success' )
+				|| count( DB::get_migrations() ) !== (int) Cache_Warmer::$options->get( 'last-db-success-migration-number' ) ) {
+				return 'updating';
+			}
+			return Warm_Up::get_last_warm_up_state();
+		} catch ( \RuntimeException $exception ) {
+			return 'unavailable';
+		}
+	}
+
     /**
      * Returns an array of texts for the admin scripts.
      */

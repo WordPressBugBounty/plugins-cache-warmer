@@ -11,7 +11,6 @@ namespace Cache_Warmer\Assets\Menu\Screens;
 
 use Exception;
 use Cache_Warmer\Admin_Menu;
-use Cache_Warmer\Warm_Up;
 
 /**
  * Assets class.
@@ -60,12 +59,20 @@ final class Main {
         );
     }
 
-    /**
-     * Loads scripts.
-     *
-     * @throws Exception Exception.
-     */
+	/**
+	 * Load controls only when the queue schema and status are available.
+	 *
+	 * Diagnostic pages require no polling or warming handlers. The state
+	 * reader contains retryable storage errors; no completion is fabricated.
+	 *
+	 * @return void
+	 */
     private function scripts() {
+		// Diagnostics and unavailable queues have no warming controls to bind.
+		$state = Admin_Menu::get_main_screen_state();
+		if ( isset( $_GET['tmm-do'] ) || in_array( $state, array( 'updating', 'unavailable' ), true ) ) {
+			return;
+		}
 
         // Popper + Tippy.js.
 
@@ -110,7 +117,7 @@ final class Main {
             [
                 'nonceToken'      => wp_create_nonce( 'cache-warmer-menu' ),
                 'txt'             => Admin_Menu::get_texts(),
-                'lastWarmUpState' => Warm_Up::get_last_warm_up_state(),
+				'lastWarmUpState' => $state,
             ]
         );
     }

@@ -39,11 +39,17 @@ final class Publish_Box {
         );
     }
 
-    /**
-     * Adds publish-box text.
-     *
-     * @param WP_Post $post The current post object.
-     */
+	/**
+	 * Renders the post's warming URL, latest result and exclusion diagnosis.
+	 *
+	 * Stored log values and generated URLs are escaped at their HTML boundaries.
+	 * The exclusion preview follows the current literal-or-regex setting and may
+	 * normalize a leading regex quantifier before evaluating configured patterns.
+	 * This method reads settings and log state but does not persist changes.
+	 *
+	 * @param WP_Post $post Post whose permalink and latest warm-up data are shown.
+	 * @return void
+	 */
     public function print_meta_box_content( WP_Post $post ) {
         $post_data = Utils::get_post_latest_data( $post->ID );
 
@@ -91,7 +97,7 @@ final class Publish_Box {
             <div class="cache-warmer-publish-box-image"></div>
             <div class="cache-warmer-publish-box-content">
                 <?php esc_attr_e( 'Last result:', 'cache-warmer' ); ?>
-                <b><?php echo $post_data->log_extra; ?></b>
+                <b><?php echo esc_html( $post_data->log_extra ); ?></b>
             </div>
         </div>
         <div class="misc-pub-section cache-warmer-publish-box" id="cache-warmer-depth">

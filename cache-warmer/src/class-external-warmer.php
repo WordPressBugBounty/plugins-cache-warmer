@@ -27,13 +27,12 @@ final class External_Warmer {
      */
     const WARM_POSTS_CHUNK_ACTION_NAME = 'cache_warmer_warm_urls_chunk';
 
-    /**
-     * Constructor.
-     */
+	/**
+	 * Register external discovery and chunk workers for the active runtime.
+	 *
+	 * Deactivation cancellation is owned by the early central cleanup callback.
+	 */
     public function __construct() {
-
-        // Unschedule interval action on plugin deactivation.
-        register_deactivation_hook( CACHE_WARMER_FILE, [ __CLASS__, 'unschedule' ] );
 
         // Creates external warmer post chunks.
         add_action( self::INTERVAL_HOOK_NAME, [ $this, 'create_external_warmer_post_chunks' ] );
@@ -89,109 +88,147 @@ final class External_Warmer {
         }
     }
 
-    /**
-     * Warm posts chunk action name.
-     *
-     * @param array $args Arguments.
-     */
-    public function warm_posts_chunk( $args ) {
-        $urls        = $args['urls'];
-        $req_headers = $args['headers'];
+	/**
+	 * Submit a URL chunk to configured external servers and append their results.
+	 *
+	 * Expects same-domain URLs and HTTP header lines. The transport helper may
+	 * return no servers, in which case no result is logged. For each returned
+	 * server, records each submitted URL: malformed/missing entries and service
+	 * failures become failed results; extra response entries are ignored.
+	 * A processed status is treated as success independently of the page code.
+	 *
+	 * Requests and log writes are not transactional. The logger's false return
+	 * is not checked here; exceptions propagate and can leave earlier server
+	 * requests or result rows completed. Repeated calls can append new rows.
+	 *
+	 * @param array $args {
+	 *     Chunk payload supplied by the scheduled action.
+	 *
+	 *     @type string[] $urls    URLs belonging to the same domain.
+	 *     @type string[] $headers Request header lines in name: value form.
+	 * }
+	 *
+	 * @return void
+	 *
+	 * @throws \Exception When option access or result logging reports a persistence or lock failure.
+	 */
+	public function warm_posts_chunk( $args ) {
+		$urls        = $args['urls'];
+		$req_headers = $args['headers'];
 
-        $external_warmer_response = self::warm_the_link( $urls, $req_headers );
+		$external_warmer_response = self::warm_the_link( $urls, $req_headers );
 
-        $req_headers_assoc = [];
-        foreach ( $req_headers as $header ) {
-            $parts = explode( ': ', $header, 2 );
-            if ( count( $parts ) === 2 ) {
-                $req_headers_assoc[ strtolower( $parts[0] ) ] = $parts[1];
-            }
-        }
+		$req_headers_assoc = array();
+		foreach ( $req_headers as $header ) {
+			$parts = explode( ': ', $header, 2 );
+			if ( count( $parts ) === 2 ) {
+				$req_headers_assoc[ strtolower( $parts[0] ) ] = $parts[1];
+			}
+		}
 
-        foreach ( $external_warmer_response as $value ) {
-            $code        = $value['code'];
-            $server_code = $value['server_code'];
+		foreach ( $external_warmer_response as $value ) {
+			$code        = $value['code'];
+			$server_code = $value['server_code'];
 
-            if ( 200 === $code ) {
-                $body = json_decode( $value['body'], true );
+			if ( 200 === $code ) {
+				$body = json_decode( $value['body'], true );
 
-                foreach ( $body as $i => $url_visit ) {
-                    $url = $urls[ $i ];
+				// Account for every submitted URL. A short or malformed service
+				// response must not silently drop work or manufacture extra logs.
+				foreach ( $urls as $i => $url ) {
+					$url_visit = is_array( $body ) ? ( $body[ $i ] ?? null ) : null;
+					if (
+						! is_array( $url_visit ) ||
+						! isset( $url_visit['status'], $url_visit['headers'] ) ||
+						! is_string( $url_visit['status'] ) ||
+						! is_array( $url_visit['headers'] ) ||
+						count( array_filter( $url_visit['headers'], 'is_string' ) ) !== count( $url_visit['headers'] ) ||
+						! is_numeric( $url_visit['time'] ?? 0 ) ||
+						! is_finite( (float) ( $url_visit['time'] ?? 0 ) ) ||
+						(float) ( $url_visit['time'] ?? 0 ) < 0
+					) {
+						Logging::log_external_result(
+							false,
+							$server_code . ' ' . $url,
+							null,
+							__( 'Invalid external server response', 'cache-warmer' ),
+							$req_headers_assoc['user-agent'] ?? ''
+						);
+						continue;
+					}
 
-                    $status = $url_visit['status'];
-                    $time   = $url_visit['time'] ?? 0;
+					$status = $url_visit['status'];
+					$time   = $url_visit['time'] ?? 0;
 
-                    $headers       = [];
-                    $response_code = '';
+					$headers       = array();
+					$response_code = '';
 
-                    foreach ( $url_visit['headers'] as $header ) {
-                        if ( strpos( $header, 'HTTP/' ) === 0 ) {
-                            $parts = explode( ' ', $header );
-                            if ( isset( $parts[1] ) ) {
-                                $response_code = $parts[1];
-                            }
-                        } else {
-                            $parts = explode( ': ', $header, 2 );
-                            if ( count( $parts ) === 2 ) {
-                                $headers[ strtolower( $parts[0] ) ] = $parts[1];
-                            }
-                        }
-                    }
+					foreach ( $url_visit['headers'] as $header ) {
+						if ( strpos( $header, 'HTTP/' ) === 0 ) {
+							$parts = explode( ' ', $header );
+							if ( isset( $parts[1] ) ) {
+								$response_code = $parts[1];
+							}
+						} else {
+							$parts = explode( ': ', $header, 2 );
+							if ( count( $parts ) === 2 ) {
+								$headers[ strtolower( $parts[0] ) ] = $parts[1];
+							}
+						}
+					}
 
-                    if ( 'processed' === $status ) {
-                        $content_type_header = explode( ';', is_array( $header_val = $headers['content-type'] ?? '' ) ? reset( $header_val ) : $header_val )[0]; // @codingStandardsIgnoreLine
+					if ( 'processed' === $status ) {
+						$content_type_value  = $headers['content-type'] ?? '';
+						$content_type_header = explode( ';', is_array( $content_type_value ) ? reset( $content_type_value ) : $content_type_value )[0];
+						$content_length      = $headers['content-length'] ?? '';
+						$cf_cache_status     = $headers['cf-cache-status'] ?? '';
+						$wp_cache_status     = $headers['x-wp-super-cache'] ?? '';
+						$x_cache_status      = $headers['x-cache'] ?? '';
 
-                        Logging::log_success(
-                            $server_code . ' ' . $url,
-                            self::WARMUP_ID,
-                            0,
-                            round( $time, 2 ),
-                            null,
-                            $response_code,
-                            0,
-                            $req_headers_assoc['user-agent'] ?? '',
-                            [],
-                            $content_type_header,
-                            is_array( $header_val = $headers['content-length'] ?? '' ) ? reset( $header_val ) : $header_val, // @codingStandardsIgnoreLine
-                            is_array( $header_val = $headers['cf-cache-status'] ?? '' ) ? reset( $header_val ) : $header_val, // @codingStandardsIgnoreLine
-                            is_array( $header_val = $headers['x-wp-super-cache'] ?? '' ) ? reset( $header_val ) : $header_val, // @codingStandardsIgnoreLine
-                            is_array( $header_val = $headers['x-cache'] ?? '' ) ? reset( $header_val ) : $header_val, // @codingStandardsIgnoreLine
-                        );
-                    } else {
-                        Logging::log_failure(
-                            $server_code . ' ' . $url,
-                            self::WARMUP_ID,
-                            0,
-                            round( $time, 2 ),
-                            sprintf(
-                                /* translators: %s is external server status. */
-                                __( 'External server status: %s', 'cache-warmer' ),
-                                $status
-                            ),
-                            0,
-                            $req_headers['User-Agent'] ?? ''
-                        );
-                    }
-                }
-            } else {
-                foreach ( $urls as  $url ) {
-                    Logging::log_failure(
-                        $server_code . ' ' . $url,
-                        self::WARMUP_ID,
-                        0,
-                        null,
-                        sprintf(
-                            /* translators: %s is server response code. */
-                            __( 'Server response code: %d', 'cache-warmer' ),
-                            $code
-                        ),
-                        0,
-                        $req_headers_assoc['user-agent'] ?? '',
-                    );
-                }
-            }
-        }
-    }
+						Logging::log_external_result(
+							true,
+							$server_code . ' ' . $url,
+							round( $time, 2 ),
+							$response_code,
+							$req_headers_assoc['user-agent'] ?? '',
+							array(),
+							$content_type_header,
+							is_array( $content_length ) ? reset( $content_length ) : $content_length,
+							is_array( $cf_cache_status ) ? reset( $cf_cache_status ) : $cf_cache_status,
+							is_array( $wp_cache_status ) ? reset( $wp_cache_status ) : $wp_cache_status,
+							is_array( $x_cache_status ) ? reset( $x_cache_status ) : $x_cache_status,
+						);
+					} else {
+						Logging::log_external_result(
+							false,
+							$server_code . ' ' . $url,
+							round( $time, 2 ),
+							sprintf(
+								/* translators: %s is external server status. */
+								__( 'External server status: %s', 'cache-warmer' ),
+								$status
+							),
+							$req_headers_assoc['user-agent'] ?? ''
+						);
+					}
+				}
+			} else {
+				foreach ( $urls as  $url ) {
+					Logging::log_external_result(
+						false,
+						$server_code . ' ' . $url,
+						null,
+						sprintf(
+							/* translators: %s is server response code. */
+							__( 'Server response code: %d', 'cache-warmer' ),
+							$code
+						),
+						$req_headers_assoc['user-agent'] ?? '',
+					);
+				}
+			}
+		}
+	}
 
     /**
      * Returns the list of servers to use for external warmer.
@@ -201,11 +238,11 @@ final class External_Warmer {
      * @return array
      */
     private static function get_servers_to_use( string $domain ) {
-        $license_key        = get_option( 'cache-warmer-setting-external-warmer-license-key' . $domain );
-        $last_response_code = (int) get_option( 'cache-warmer-setting-external-warmer-key-validation-endpoint-last-response-code' . $domain );
+		$license_key        = Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-license-key' . $domain );
+		$last_response_code = (int) Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-key-validation-endpoint-last-response-code' . $domain );
 
         if ( $license_key && 200 === $last_response_code ) {
-            return get_option( 'cache-warmer-setting-external-warmer-servers-to-use' . $domain, [] );
+			return Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-servers-to-use' . $domain, [] );
         } else {
             return [];
         }
@@ -273,7 +310,7 @@ final class External_Warmer {
 
         // An assumption is that all of them belong to the same domain.
 
-        $external_warmer_license_key = get_option( 'cache-warmer-setting-external-warmer-license-key' . $domain );
+		$external_warmer_license_key = Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-license-key' . $domain );
 
         if ( ! $external_warmer_license_key ) {
             return [];
@@ -336,10 +373,10 @@ final class External_Warmer {
      */
     public static function schedule_for_all_domains() {
         foreach ( Utils::get_unique_domains_from_entry_points() as $unique_domain ) {
-            $license_key    = get_option( 'cache-warmer-setting-external-warmer-license-key' . $unique_domain );
-            $response_code  = (int) get_option( 'cache-warmer-setting-external-warmer-key-validation-endpoint-last-response-code' . $unique_domain );
-            $servers_to_use = get_option( 'cache-warmer-setting-external-warmer-servers-to-use' . $unique_domain );
-            $interval       = get_option( 'cache-warmer-setting-external-warmer-interval' . $unique_domain ) * 60 * 60;
+			$license_key    = Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-license-key' . $unique_domain );
+			$response_code  = (int) Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-key-validation-endpoint-last-response-code' . $unique_domain );
+			$servers_to_use = Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-servers-to-use' . $unique_domain );
+			$interval       = Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-interval' . $unique_domain ) * 60 * 60;
 
             if (
                 $license_key &&

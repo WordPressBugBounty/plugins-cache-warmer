@@ -1,8 +1,6 @@
 <?php
 /**
- * A class for actions scheduling (using Action Scheduler).
- *
- * A wrapper for Action Scheduler method.
+ * Shared Action Scheduler admission and duplicate-repair wrapper.
  *
  * @package WP-Plugins-Core
  */
@@ -10,169 +8,198 @@
 namespace WP_Plugins_Core;
 
 /**
- * Class Action_Scheduler
+ * Coordinates Action Scheduler writes through shared-database locks.
  */
 final class Action_Scheduler {
 
-    /**
-     * DO NOT USE ANYMORE.
-     *
-     * I returned this method for back-compatability.
-     *
-     * Schedule an interval, if it wasn't scheduled yet.
-     *
-     * And delete duplicate intervals.
-     *
-     * Handles a case when duplicate actions were scheduled, and deletes a file.
-     *
-     * NOTE: Does nothing if Action Scheduler is not loaded.
-     *
-     * @param int    $timestamp           When the first instance of the job will run.
-     * @param int    $interval_in_seconds How long to wait between runs.
-     * @param string $hook                The hook to trigger.
-     * @param array  $args Arguments to pass when the hook triggers.
-     * @param string $group The group to assign this job to.
-     * @param bool   $unique Whether the action should be unique.
-     * @param int    $priority Lower values take precedence over higher values. Defaults to 10, with acceptable values falling in the range 0-255.
-     */
-    public static function schedule_an_interval( $timestamp, $interval_in_seconds, $hook, $args = [], $group = '', $unique = false, $priority = 10 ) {
-        if ( ! class_exists( 'ActionScheduler' ) ) {
-            return;
-        }
+	/**
+	 * Admits one recurring action or repairs exact pending duplicates.
+	 *
+	 * The exact hook, argument, and group namespace is protected by a shared
+	 * database lock. The earliest pending action is retained and later pending
+	 * duplicates are cancelled; an existing running action also prevents new
+	 * admission. Lock contention and an unavailable Action Scheduler runtime
+	 * leave the schedule unchanged. Work runs immediately after Action Scheduler
+	 * initialization, or is deferred to that hook when initialization is pending.
+	 *
+	 * @param int    $timestamp           When the first instance of the job will run.
+	 * @param int    $interval_in_seconds How long to wait between runs.
+	 * @param string $hook                The hook to trigger.
+	 * @param array  $args                Arguments to pass when the hook triggers.
+	 * @param string $group               The group to assign this job to.
+	 * @param bool   $unique              Whether Action Scheduler should apply its native uniqueness policy.
+	 * @param int    $priority            Lower values take precedence over higher values. Defaults to 10; accepts 0-255.
+	 * @return void
+	 * @throws \Throwable When immediate scheduler lookup, admission, cancellation, or lock cleanup fails.
+	 */
+	public static function schedule_an_interval( $timestamp, $interval_in_seconds, $hook, $args = array(), $group = '', $unique = false, $priority = 10 ) {
+		if ( ! self::is_available() ) {
+			return;
+		}
 
-        /**
-         * Do not run the interval for the actions which are already running.
-         */
+		$function = function () use ( $timestamp, $interval_in_seconds, $hook, $args, $group, $unique, $priority ) {
+			$resource = self::get_lock_resource( $hook, $args, $group );
 
-        $interval_scheduling_transient_name = 'wp-plugins-core-interval-scheduling-' . $hook;
+			if ( ! Database_Lock::acquire( 'action-scheduler', $resource, 5 ) ) {
+				return;
+			}
 
-        // Unset to save & get transients from options table instead of cache.
-        $prev_obj_cache_val = wp_using_ext_object_cache( false );
+			try {
+				$pending = self::get_matching_actions( $hook, $args, $group, \ActionScheduler_Store::STATUS_PENDING );
+				if ( ! $pending && ! self::get_matching_actions( $hook, $args, $group, \ActionScheduler_Store::STATUS_RUNNING ) ) {
+					as_schedule_recurring_action(
+						$timestamp,
+						$interval_in_seconds,
+						$hook,
+						$args,
+						$group,
+						$unique,
+						$priority
+					);
+				} else {
+					self::remove_duplicate_actions( $pending );
+				}
+			} finally {
+				Database_Lock::release( 'action-scheduler', $resource );
+			}
+		};
 
-        if ( 'yes' !== get_transient( $interval_scheduling_transient_name ) ) {
-            set_transient( $interval_scheduling_transient_name, 'yes', MINUTE_IN_SECONDS );
-        } else {
-            return;
-        }
-        wp_using_ext_object_cache( $prev_obj_cache_val );
+		if ( did_action( 'action_scheduler_init' ) ) {
+			$function();
+		} else {
+			add_action( 'action_scheduler_init', $function );
+		}
+	}
 
-        $function = function() use ( $timestamp, $interval_in_seconds, $hook, $args, $group, $unique, $priority, $interval_scheduling_transient_name ) {
-            // Unset to save & get transients from options table instead of cache.
-            $prev_obj_cache_val = wp_using_ext_object_cache( false );
+	/**
+	 * Admits one single action or repairs exact pending duplicates.
+	 *
+	 * The exact hook, argument, and group namespace is protected by a shared
+	 * database lock. The earliest pending action is retained and later pending
+	 * duplicates are cancelled; an existing running action also prevents new
+	 * admission. Lock contention and an unavailable Action Scheduler runtime
+	 * leave the schedule unchanged. Work runs immediately after Action Scheduler
+	 * initialization, or is deferred to that hook when initialization is pending.
+	 *
+	 * @param int    $timestamp When the action will run.
+	 * @param string $hook      The hook to trigger.
+	 * @param array  $args      Arguments to pass when the hook triggers.
+	 * @param string $group     The group to assign this job to.
+	 * @param bool   $unique    Whether Action Scheduler should apply its native uniqueness policy.
+	 * @param int    $priority  Lower values take precedence over higher values. Defaults to 10; accepts 0-255.
+	 * @return void
+	 * @throws \Throwable When immediate scheduler lookup, admission, cancellation, or lock cleanup fails.
+	 */
+	public static function schedule_single_action( $timestamp, $hook, $args = array(), $group = '', $unique = false, $priority = 10 ) {
+		if ( ! self::is_available() ) {
+			return;
+		}
 
-            $interval_scheduled_transient_name = 'wp-plugins-core-interval-scheduled-' . $hook;
-            $interval_value                    = $interval_in_seconds . 's';
+		$function = function () use ( $timestamp, $hook, $args, $group, $unique, $priority ) {
+			$resource = self::get_lock_resource( $hook, $args, $group );
 
-            if ( get_transient( $interval_scheduled_transient_name ) !== $interval_value ) {
-                if ( false === as_next_scheduled_action( $hook, $args ? $args : null, $group ) ) {
-                    as_schedule_recurring_action(
-                        $timestamp,
-                        $interval_in_seconds,
-                        $hook,
-                        $args,
-                        $group,
-                        $unique,
-                        $priority
-                    );
-                } elseif ( self::is_duplicate_scheduled( $hook, $args, $group ) ) {
-                    as_unschedule_all_actions( $hook, $args, $group );
+			if ( ! Database_Lock::acquire( 'action-scheduler', $resource, 5 ) ) {
+				return;
+			}
 
-                    as_schedule_recurring_action(
-                        $timestamp,
-                        $interval_in_seconds,
-                        $hook,
-                        $args,
-                        $group,
-                        $unique,
-                        $priority
-                    );
-                }
+			try {
+				$pending = self::get_matching_actions( $hook, $args, $group, \ActionScheduler_Store::STATUS_PENDING );
+				if ( ! $pending && ! self::get_matching_actions( $hook, $args, $group, \ActionScheduler_Store::STATUS_RUNNING ) ) {
+					as_schedule_single_action(
+						$timestamp,
+						$hook,
+						$args,
+						$group,
+						$unique,
+						$priority
+					);
+				} else {
+					self::remove_duplicate_actions( $pending );
+				}
+			} finally {
+				Database_Lock::release( 'action-scheduler', $resource );
+			}
+		};
 
-                set_transient(
-                    $interval_scheduled_transient_name,
-                    $interval_value,
-                    MINUTE_IN_SECONDS * 5
-                );
+		if ( did_action( 'action_scheduler_init' ) ) {
+			$function();
+		} else {
+			add_action( 'action_scheduler_init', $function );
+		}
+	}
 
-                delete_transient( $interval_scheduling_transient_name );
-            }
+	/**
+	 * Retains the earliest pending action and cancels only its exact duplicates.
+	 *
+	 * Never delete all work and attempt replacement admission: admission may
+	 * return zero or throw, losing every existing job. Keeping the original
+	 * also preserves its schedule and payload, as ordinary idempotent calls do.
+	 *
+	 * @param array $actions Exact pending action IDs, earliest first.
+	 * @return void
+	 */
+	private static function remove_duplicate_actions( $actions ) {
+		array_shift( $actions );
+		foreach ( $actions as $action_id ) {
+			\ActionScheduler::store()->cancel_action( $action_id );
+		}
+	}
 
-            wp_using_ext_object_cache( $prev_obj_cache_val );
-        };
+	/**
+	 * Returns action IDs in the exact namespace, including the default group.
+	 *
+	 * Action Scheduler treats an empty query group as a wildcard, so inspect
+	 * returned groups before using results for admission or cancellation.
+	 *
+	 * @param string $hook Hook name.
+	 * @param array  $args Action arguments.
+	 * @param string $group Action group.
+	 * @param string $status Action status.
+	 * @return array Exact action IDs, earliest first.
+	 */
+	private static function get_matching_actions( $hook, $args, $group, $status ) {
+		$actions  = as_get_scheduled_actions(
+			array(
+				'hook'     => $hook,
+				'args'     => $args,
+				'group'    => $group,
+				'status'   => $status,
+				'per_page' => -1,
+				'orderby'  => 'date',
+				'order'    => 'ASC',
+			),
+			OBJECT
+		);
+		$matching = array();
+		foreach ( $actions as $action_id => $action ) {
+			if ( (string) $group === $action->get_group() ) {
+				$matching[] = $action_id;
+			}
+		}
+		return $matching;
+	}
 
-        if ( did_action( 'action_scheduler_init' ) ) {
-            $function();
-        } else {
-            add_action( 'action_scheduler_init', $function );
-        }
-    }
+	/**
+	 * Returns a deterministic lock resource for one logical schedule.
+	 *
+	 * @param string $hook  Action hook.
+	 * @param array  $args  Action arguments.
+	 * @param string $group Action group.
+	 * @return string Lock resource.
+	 */
+	private static function get_lock_resource( $hook, $args, $group ) {
+		// Both APIs inspect the same hook/arguments/group namespace.
+		return hash( 'sha256', wp_json_encode( array( $hook, $args, $group ) ) );
+	}
 
-    /**
-     * Schedule a single action if it wasn't scheduled yet.
-     *
-     * @param int    $timestamp When the action will run.
-     * @param string $hook      The hook to trigger.
-     * @param array  $args      Arguments to pass when the hook triggers.
-     * @param string $group     The group to assign this job to.
-     * @param bool   $unique    Whether the action should be unique.
-     * @param int    $priority  Lower values take precedence over higher values. Defaults to 10, with acceptable values falling in the range 0-255.
-     */
-    public static function schedule_single_action( $timestamp, $hook, $args = [], $group = '', $unique = false, $priority = 10 ) {
-        if ( ! class_exists( 'ActionScheduler' ) ) {
-            return;
-        }
-
-        $function = function() use ( $timestamp, $hook, $args, $group, $unique, $priority ) {
-            if ( false === as_next_scheduled_action( $hook, $args, $group ) ) {
-                as_schedule_single_action(
-                    $timestamp,
-                    $hook,
-                    $args,
-                    $group,
-                    $unique,
-                    $priority
-                );
-            } elseif ( self::is_duplicate_scheduled( $hook, $args, $group ) ) {
-                as_unschedule_all_actions( $hook, $args, $group );
-
-                as_schedule_single_action(
-                    $timestamp,
-                    $hook,
-                    $args,
-                    $group,
-                    $unique,
-                    $priority
-                );
-            }
-        };
-
-        if ( did_action( 'action_scheduler_init' ) ) {
-            $function();
-        } else {
-            add_action( 'action_scheduler_init', $function );
-        }
-    }
-
-    /**
-     * Check if there are duplicate scheduled actions.
-     *
-     * @param string $hook  Hook name of the scheduled action.
-     * @param array  $args  Args that would have been passed to the job.
-     * @param string $group The group the job is assigned to.
-     *
-     * @return bool True if duplicate actions found, false otherwise.
-     */
-    private static function is_duplicate_scheduled( $hook, $args = [], $group = '' ) {
-        $actions = as_get_scheduled_actions(
-            [
-                'hook'   => $hook,
-                'args'   => $args,
-                'group'  => $group,
-                'status' => \ActionScheduler_Store::STATUS_PENDING,
-            ],
-            'ids'
-        );
-
-        return count( $actions ) > 1;
-    }
+	/**
+	 * Whether the Action Scheduler runtime API is ready.
+	 *
+	 * @return bool
+	 */
+	private static function is_available() {
+		return class_exists( 'ActionScheduler' )
+			&& function_exists( 'as_next_scheduled_action' )
+			&& function_exists( 'as_get_scheduled_actions' );
+	}
 }

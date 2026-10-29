@@ -167,6 +167,9 @@ final class WP_Plugins_Core {
      */
     private function import_plugin_files() {
         $src_files = [
+            'load-balancer-support/class-database-lock',
+            'load-balancer-support/class-consistent-options',
+            'load-balancer-support/class-migration-guard',
             'class-ajax',
             'class-action-scheduler',
             'class-options',

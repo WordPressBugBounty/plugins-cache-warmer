@@ -16,23 +16,27 @@ use Exception;
  */
 final class Settings_Export {
 
-    /**
-     * Listens for the export action.
-     *
-     * Accepts: $_GET['nonce']
-     *          $_GET['cache-warmer-action']
-     *
-     * @throws Exception Exception.
-     */
-    public static function add_listeners() {
-        if (
-            isset( $_GET['nonce'], $_GET['cache-warmer-action'] ) && // @codingStandardsIgnoreLine
-            wp_verify_nonce( wp_unslash( $_GET['nonce'] ), 'cache-warmer-menu' ) && // @codingStandardsIgnoreLine
-            'export-settings' === wp_unslash( $_GET['cache-warmer-action'] ) // @codingStandardsIgnoreLine
-        ) {
-            self::export();
-        }
-    }
+	/**
+	 * Serves a settings export requested from the administrator menu.
+	 *
+	 * The request must carry the menu nonce and exact export action, and the
+	 * current user must be able to manage options. Nonmatching requests return
+	 * without output. An accepted request sends download headers and JSON before
+	 * terminating execution; it does not enforce a particular HTTP method.
+	 *
+	 * @return void
+	 * @throws Exception When an accepted settings read propagates an option-layer failure.
+	 */
+	public static function add_listeners() {
+		if (
+			current_user_can( 'manage_options' ) &&
+			isset( $_GET['nonce'], $_GET['cache-warmer-action'] ) && // @codingStandardsIgnoreLine
+			wp_verify_nonce( wp_unslash( $_GET['nonce'] ), 'cache-warmer-menu' ) && // @codingStandardsIgnoreLine
+			'export-settings' === wp_unslash( $_GET['cache-warmer-action'] ) // @codingStandardsIgnoreLine
+		) {
+			self::export();
+		}
+	}
 
     /**
      * Does the export.

@@ -1,6 +1,11 @@
 <?php
 /**
- * Template for admin menu
+ * Renders Cache Warmer's complete administrator settings form.
+ *
+ * Values come from the request-scoped option registry. External service
+ * responses are treated as untrusted: location rows are normalized before
+ * controls are built and failure bodies are escaped before rendering. Field
+ * registration and final HTML generation are delegated to WP Plugins Core.
  *
  * @package Cache-Warmer
  */
@@ -305,13 +310,6 @@ use WP_Plugins_Core\Setting_Fields;
                             'type'  => 'checkbox',
                         ],
                         [
-                            'title' => __( 'Object Cache', 'cache-warmer' ),
-                            'desc'  => __( "Use object cache for tree storage, when it's available", 'cache-warmer' ),
-                            'id'    => 'use-object-cache',
-                            'value' => '1' === Cache_Warmer::$options->get( 'cache-warmer-setting-use-object-cache' ) ? 'yes' : 'no',
-                            'type'  => 'checkbox',
-                        ],
-                        [
                             'type' => 'sectionend',
                             'id'   => 'crawler-settings',
                         ],
@@ -545,14 +543,14 @@ use WP_Plugins_Core\Setting_Fields;
                     // Returns entry points unique links.
 
                     foreach ( Utils::get_unique_domains_from_entry_points() as $unique_domain ) {
-                        $last_response_code = (int) get_option(
+                        $last_response_code = (int) Cache_Warmer::$options->get_dynamic(
                             'cache-warmer-setting-external-warmer-key-validation-endpoint-last-response-code' . $unique_domain
                         );
-                        $last_response_body = get_option(
+                        $last_response_body = Cache_Warmer::$options->get_dynamic(
                             'cache-warmer-setting-external-warmer-key-validation-endpoint-last-response-body' . $unique_domain
                         );
 
-                        $servers_to_use = get_option(
+                        $servers_to_use = (array) Cache_Warmer::$options->get_dynamic(
                             'cache-warmer-setting-external-warmer-servers-to-use' . $unique_domain,
                             []
                         );
@@ -562,28 +560,17 @@ use WP_Plugins_Core\Setting_Fields;
 
                             $cache_warmer_available_locations = [];
 
-                            if ( count( $locations ) > 1 ) {
-                                foreach ( $locations as $location ) {
-                                    foreach ( $location as $location_name => $location_url ) {
-                                        $data = [
-                                            'desc'    => $location_name,
-                                            'id'      => $location_url . $unique_domain,
-                                            'default' => in_array( $location_url, $servers_to_use, true ) ? 'yes' : 'no',
-                                            'type'    => 'checkbox',
-                                        ];
-
-                                        if ( 0 === count( $cache_warmer_available_locations ) ) {
-                                            $data['title'] = __( 'Server(s) To Use', 'cache-warmer' );
-                                        }
-
-                                        $cache_warmer_available_locations[] = $data;
+                            // The service can return either a flat map or a list of maps,
+                            // including a list containing just one available location.
+                            foreach ( $locations as $name => $location ) {
+                                $location = is_array( $location ) ? $location : [ $name => $location ];
+                                foreach ( $location as $location_name => $location_url ) {
+                                    if ( ! is_string( $location_url ) || '' === $location_url ) {
+                                        continue;
                                     }
-                                }
-                            } else {
-                                foreach ( $locations as $location_name => $location_url ) {
                                     $data = [
-                                        'desc'    => $location_name,
-                                        'id'      => $location_url,
+                                        'desc'    => esc_html( $location_name ),
+                                        'id'      => $location_url . $unique_domain,
                                         'default' => in_array( $location_url, $servers_to_use, true ) ? 'yes' : 'no',
                                         'type'    => 'checkbox',
                                     ];
@@ -596,7 +583,7 @@ use WP_Plugins_Core\Setting_Fields;
                                 }
                             }
 
-                            $external_warmer_interval = get_option( 'cache-warmer-setting-external-warmer-interval' . $unique_domain );
+                            $external_warmer_interval = Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-interval' . $unique_domain );
 
                             $cache_warmer_available_locations[] = [
                                 'title'    => __( 'How often to warm posts', 'cache-warmer' ),
@@ -622,7 +609,7 @@ use WP_Plugins_Core\Setting_Fields;
                                             sprintf(
                                                 __( 'Server returned code <b>"%1$s"</b> with text: <b>%2$s</b>', 'cache-warmer' ),
                                                 $last_response_code,
-                                                $last_response_body
+                                                esc_html( $last_response_body )
                                             ) :
                                             __( 'Please specify External server API key first.', 'cache-warmer' ),
                                 ],
@@ -638,7 +625,7 @@ use WP_Plugins_Core\Setting_Fields;
                             [
                                 'id'                => 'external-warmer-license-key' . $unique_domain,
                                 'title'             => __( 'API Key', 'cache-warmer' ),
-                                'value'             => get_option( 'cache-warmer-setting-external-warmer-license-key' . $unique_domain ),
+								'value'             => Cache_Warmer::$options->get_dynamic( 'cache-warmer-setting-external-warmer-license-key' . $unique_domain ),
                                 'type'              => 'text',
                                 'custom_attributes' => [
                                     'data-server-domain' => $unique_domain,

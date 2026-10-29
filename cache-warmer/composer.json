@@ -1,5 +1,7 @@
 {
   "name": "tmmtech/cache-warmer",
+  "description": "Visits WordPress pages to warm page and asset caches.",
+  "license": "GPL-3.0-only",
   "type": "wordpress-plugin",
   "repositories": [
     {
@@ -12,10 +14,110 @@
     "ext-dom": "*",
     "ext-libxml": "*",
     "automattic/jetpack-autoloader": "^2.11",
-    "tmmtech/wp-plugins-core": "*",
+    "tmmtech/wp-plugins-core": "^0.1.58",
     "vipnytt/sitemapparser": "^1.1",
     "woocommerce/action-scheduler": "^3.6",
     "wp-cli/wp-cli": "^2.11"
+  },
+  "scripts": {
+    "test": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test test --"
+    ],
+    "test:unit": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test unit --"
+    ],
+    "test:unit:watch": [
+      "Composer\\Config::disableProcessTimeout",
+      "node --watch --watch-preserve-output --watch-path=cache-warmer.php --watch-path=src --watch-path=tests/Unit --watch-path=tests/Support node_modules/.bin/wp-plugin-test unit --"
+    ],
+    "test:dev": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test dev --"
+    ],
+    "test:dev:start": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test env-start -- core"
+    ],
+    "test:dev:stop": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test env-stop -- core"
+    ],
+    "test:dev:destroy": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test env-cleanup -- core"
+    ],
+    "test:integration": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test integration --"
+    ],
+    "test:coverage": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test coverage --"
+    ],
+    "test:coverage-html": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test coverage-html --"
+    ],
+    "test:browser": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test browser-acceptance --"
+    ],
+    "test:browser:e2e": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test browser-e2e --"
+    ],
+    "test:browser:woocommerce": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test browser-woocommerce --"
+    ],
+    "test:compatibility": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test compatibility"
+    ],
+    "test:package": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test package"
+    ],
+    "test:scale": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test scale --"
+    ],
+    "test:orchestrator": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test infrastructure"
+    ],
+    "tests:inventory": "pnpm exec wp-plugin-test-inventory",
+    "tests:inventory:check": "pnpm exec wp-plugin-test-inventory --check",
+    "test:runtime:prune": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test runtime-prune"
+    ],
+    "test:all": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test all --"
+    ],
+    "test:release": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test release --"
+    ],
+    "e2e:env:start": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test env-start -- core"
+    ],
+    "e2e:fixture:reset": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test fixture-reset -- core"
+    ],
+    "e2e:woocommerce:start": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test env-start -- woocommerce"
+    ],
+    "e2e:woocommerce:reset": [
+      "Composer\\Config::disableProcessTimeout",
+      "pnpm exec wp-plugin-test fixture-reset -- woocommerce"
+    ]
   },
   "config": {
     "optimize-autoloader": true,

@@ -11,6 +11,16 @@
  */
 
 return [
+
+	/*
+	 * Durable per-consumer retry reservation. Retained across deactivation so
+	 * reactivation cannot bypass the remote notification failure cooldown.
+	 */
+	'wp-plugins-core-notification-fetch-state' => array(
+		'default'  => array(),
+		'autoload' => false,
+	),
+
     /*
      * The list of data of all fetched notifications.
      */

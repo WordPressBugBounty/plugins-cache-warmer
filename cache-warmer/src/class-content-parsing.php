@@ -218,70 +218,77 @@ final class Content_Parsing {
             [];
     }
 
-    /**
-     * Returns links from stylesheet.
-     *
-     * @param string $stylesheet_content Content of the stylesheet.
-     * @param string $current_url        Current page, which should be added before the relative link.
-     * @param array  $assets_preloading  Assets preloading.
-     *
-     * @return array
-     */
-    public static function get_fonts_and_images_from_stylesheet_content( $stylesheet_content, $current_url, $assets_preloading ) {
-        $current_url_parts = wp_parse_url( $current_url );
-        $urls              = [];
+	/**
+	 * Extracts same-host font and image URLs from stylesheet content.
+	 *
+	 * Font-face blocks are removed before image extraction so enabled fonts and
+	 * images are classified independently. Imports and data URLs are excluded
+	 * from the image result. Relative links are resolved against the current URL,
+	 * invalid or external-host links are discarded, and duplicates are omitted.
+	 * An invalid current URL or disabled font and image options returns no links.
+	 *
+	 * @param string                        $stylesheet_content Stylesheet text to inspect.
+	 * @param string                        $current_url        URL used to resolve relative references and enforce the host boundary.
+	 * @param array{fonts:bool,images:bool} $assets_preloading  Enabled asset categories.
+	 * @return string[] Normalized font and image URLs in discovery order.
+	 */
+	public static function get_fonts_and_images_from_stylesheet_content( $stylesheet_content, $current_url, $assets_preloading ) {
+		$current_url_parts = wp_parse_url( $current_url );
+		$urls              = array();
 
-        if (
-            $current_url_parts &&
-            $assets_preloading['fonts'] ||
-            $assets_preloading['images']
-        ) {
-            if ( preg_match_all( '/@font-face[\S\s]+?}/i', $stylesheet_content, $font_faces ) ) {
-                foreach ( $font_faces[0] as $font_face ) {
-                    $stylesheet_content = str_replace( $font_face, '', $stylesheet_content ); // Remove all @font-face.
+		if (
+			$current_url_parts &&
+			( $assets_preloading['fonts'] || $assets_preloading['images'] )
+		) {
+			if ( preg_match_all( '/@font-face[\S\s]+?}/i', $stylesheet_content, $font_faces ) ) {
+				foreach ( $font_faces[0] as $font_face ) {
+					$stylesheet_content = str_replace( $font_face, '', $stylesheet_content ); // Remove all @font-face.
 
-                    if ( $assets_preloading['fonts'] ) {
-                        if ( preg_match_all( '/url\(["\']?((?!data:)[^"\']+?)["\']?\)/i', $font_face, $links ) ) {
-                            self::links_format_validate_and_append_to_the_link( $links[1], $current_url, $urls );
-                        }
-                    }
-                }
-            }
+					if ( $assets_preloading['fonts'] ) {
+						if ( preg_match_all( '/url\(["\']?((?!data:)[^"\']+?)["\']?\)/i', $font_face, $links ) ) {
+							self::links_format_validate_and_append_to_the_link( $links[1], $current_url, $urls );
+						}
+					}
+				}
+			}
 
-            if ( $assets_preloading['images'] ) {
-                $stylesheet_content = preg_replace( '#@import\s+(?:url\()?["\']?([^"\']+?)["\']?(\))?#', '', $stylesheet_content ); // Remove all @import.
+			if ( $assets_preloading['images'] ) {
+				$stylesheet_content = preg_replace( '#@import\s+(?:url\(\s*)?["\']?((?!data:)[^"\'\)\s;]+)["\']?\s*\)?#i', '', $stylesheet_content ); // Remove all @import.
 
-                // We suppose that all leftover rules are for images because @font-face and @import rules were removed.
-                if ( preg_match_all( '/url\(["\']?((?!data:)[^"\']+?)["\']?\)/i', $stylesheet_content, $links ) ) {
-                    self::links_format_validate_and_append_to_the_link( $links[1], $current_url, $urls );
-                }
-            }
-        }
+				// We suppose that all leftover rules are for images because @font-face and @import rules were removed.
+				if ( preg_match_all( '/url\(["\']?((?!data:)[^"\']+?)["\']?\)/i', $stylesheet_content, $links ) ) {
+					self::links_format_validate_and_append_to_the_link( $links[1], $current_url, $urls );
+				}
+			}
+		}
 
-        return $urls;
-    }
+		return $urls;
+	}
 
-    /**
-     * Returns links from stylesheet.
-     *
-     * @param string $stylesheet_content Content of the stylesheet.
-     * @param string $current_url        Current page, which should be added before the relative link.
-     * @param array  $assets_preloading  Assets preloading.
-     *
-     * @return array
-     */
-    public static function get_stylesheets_links_from_stylesheet_content( $stylesheet_content, $current_url, $assets_preloading ) {
-        $current_url_parts = wp_parse_url( $current_url );
-        $urls              = [];
+	/**
+	 * Extracts same-host stylesheet imports from stylesheet content.
+	 *
+	 * Quoted and unquoted imports, with or without url(), are accepted. Data URLs,
+	 * malformed references, external hosts and duplicates are omitted. An invalid
+	 * current URL or a disabled styles option returns no links.
+	 *
+	 * @param string             $stylesheet_content Stylesheet text to inspect.
+	 * @param string             $current_url        URL used to resolve relative references and enforce the host boundary.
+	 * @param array{styles:bool} $assets_preloading  Enabled asset categories.
+	 * @return string[] Normalized imported stylesheet URLs in discovery order.
+	 */
+	public static function get_stylesheets_links_from_stylesheet_content( $stylesheet_content, $current_url, $assets_preloading ) {
+		$current_url_parts = wp_parse_url( $current_url );
+		$urls              = array();
 
-        if ( $current_url_parts && $assets_preloading['styles'] ) {
-            if ( preg_match_all( '#@import\s+(?:url\()?["\']?([^"\']+?)["\']?(\))?#', $stylesheet_content, $stylesheet_imports ) ) {
-                self::links_format_validate_and_append_to_the_link( $stylesheet_imports[1], $current_url, $urls );
-            }
-        }
+		if ( $current_url_parts && $assets_preloading['styles'] ) {
+			if ( preg_match_all( '#@import\s+(?:url\(\s*)?["\']?((?!data:)[^"\'\)\s;]+)["\']?\s*\)?#i', $stylesheet_content, $stylesheet_imports ) ) {
+				self::links_format_validate_and_append_to_the_link( $stylesheet_imports[1], $current_url, $urls );
+			}
+		}
 
-        return $urls;
-    }
+		return $urls;
+	}
 
     /**
      * Returns children (be it the children sitemaps or the pages) from the sitemap content.

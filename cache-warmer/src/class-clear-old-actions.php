@@ -26,13 +26,12 @@ final class Clear_Old_Actions {
      */
     const INTERVAL_HOOK_NAME = 'cache_warmer_clear_old_actions';
 
-    /**
-     * Constructor.
-     */
+	/**
+	 * Register retention processing without a second deactivation callback.
+	 *
+	 * Checked scheduler cleanup is registered centrally by the plugin bootstrap.
+	 */
     public function __construct() {
-
-        // Unschedule interval action on plugin deactivation.
-        register_deactivation_hook( CACHE_WARMER_FILE, [ $this, 'unschedule' ] );
 
         // Clear old actions.
         add_action( self::INTERVAL_HOOK_NAME, [ $this, 'clear' ] );

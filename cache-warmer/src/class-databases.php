@@ -296,6 +296,7 @@ final class DB {
      */
     public static function get_tables() {
         return [
+			'warm_up_seeds',
             'warm_ups_logs',
             'warm_ups_list',
             'warm_ups_user_agents',
@@ -582,6 +583,14 @@ final class DB {
 			"ALTER TABLE {$table_prefix}warm_ups_list ADD INDEX idx_queue_state (queue_state, id)",
 			"ALTER TABLE {$table_prefix}warm_ups_list ADD COLUMN legacy_key CHAR(64) NULL",
 			"ALTER TABLE {$table_prefix}warm_ups_list ADD UNIQUE KEY idx_legacy_key (legacy_key)",
+			"CREATE TABLE IF NOT EXISTS {$table_prefix}warm_up_seeds (
+				list_id BIGINT UNSIGNED NOT NULL,
+				part INT UNSIGNED NOT NULL,
+				payload MEDIUMBLOB NOT NULL,
+				PRIMARY KEY (list_id, part),
+				FOREIGN KEY (list_id) REFERENCES {$table_prefix}warm_ups_list(id) ON DELETE CASCADE
+			) ENGINE=InnoDB",
+
 		);
 
 		return $migrations;
@@ -1870,24 +1879,25 @@ final class DB {
 	 *
 	 * Accepts scheduled and triggered types only. An existing legacy-key match
 	 * returns its persisted identifier and decoded metadata without applying new
-	 * input or retention. That lookup does not explicitly check database errors.
+	 * input or retention. A failed receipt lookup rejects admission.
 	 * Otherwise parses the preferred date in the site timezone and tries at most
 	 * sixty consecutive seconds, starting with that timestamp. Parser-normalized
 	 * dates are accepted; parse warnings are not separately rejected.
 	 *
-	 * Copies each candidate date into metadata start_date. A null seed creates a
-	 * legacy run; any supplied array creates a building run with persisted seed
-	 * JSON. Inserts honor an already-owned admission fence but acquire no lock.
-	 * Unsuccessful inserts retry regardless of cause. Normal paths restore the
-	 * prior database error-display setting; successful insertion then invokes
-	 * retention. No whole-operation transaction or exception-safe restoration is
-	 * provided, so exceptions may propagate after a write or during suppression.
+	 * Small manifests remain inline. Large manifests are split into bounded binary
+	 * rows and committed with their parent and checksum descriptor in one InnoDB
+	 * transaction. Callers must not wrap large-seed admission in a transaction.
+	 * Connection fences reject reconnects; failed transfers roll back and legacy
+	 * source options remain available. Only unique timestamp collisions retry.
+	 * Error-display state is restored even when a query throws. Retention runs
+	 * after successful publication; it cannot remove unfinished manifests.
 	 *
 	 * @param array       $warm_up_meta Metadata copied and normalized for a new run.
 	 * @param string      $warmup_type  Scheduled or triggered type discriminator.
 	 * @param string      $preferred_at Preferred site-local Y-m-d H:i:s identifier.
 	 * @param array|null  $seed_tree    Initial graph, or null for direct/legacy callers.
 	 * @param string|null $legacy_key   Stable migration receipt, or null for a new run.
+	 * @throws \RuntimeException When an unfinished legacy receipt is unreadable.
 	 * @return array|false ID, warmed_at and metadata; false for unsupported type, parse/JSON failure or exhausted attempts. Existing receipt metadata retains its decoded type.
 	 */
 	public static function create_warm_up( array $warm_up_meta, string $warmup_type, string $preferred_at, ?array $seed_tree = null, ?string $legacy_key = null ) {
@@ -1904,8 +1914,15 @@ final class DB {
 
 		$table_name = self::get_tables_prefix() . 'warm_ups_list';
 		if ( null !== $legacy_key ) {
-			$existing = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE legacy_key = %s', $table_name, $legacy_key ), ARRAY_A );
+			$existing = $wpdb->get_row( $wpdb->prepare( 'SELECT id, warmed_at, meta, queue_state FROM %i WHERE legacy_key = %s', $table_name, $legacy_key ), ARRAY_A );
+			if ( $wpdb->last_error ) {
+				return false;
+			}
 			if ( $existing ) {
+				// A receipt for unfinished work is valid only while its source is intact.
+				if ( 'building' === $existing['queue_state'] ) {
+					self::read_warm_up_seed( (int) $existing['id'] );
+				}
 				return array(
 					'id'        => (int) $existing['id'],
 					'warmed_at' => $existing['warmed_at'],
@@ -1920,51 +1937,200 @@ final class DB {
 		}
 
 		$timestamp = $date->getTimestamp();
-		$previous  = $wpdb->suppress_errors();
-
-		for ( $offset = 0; $offset < 60; $offset++ ) {
-			$warmed_at                  = wp_date( 'Y-m-d H:i:s', $timestamp + $offset );
-			$warm_up_meta['start_date'] = $warmed_at;
-
-			$meta_json = wp_json_encode( $warm_up_meta );
-			$seed_json = null === $seed_tree ? null : wp_json_encode( $seed_tree );
-			if ( false === $meta_json || false === $seed_json ) {
-				$wpdb->suppress_errors( $previous );
-				return false;
-			}
-			$fence    = null === self::$admission_connection ? '1=1' : $wpdb->prepare(
-				'CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID()',
-				self::$admission_connection,
-				self::get_lock_name( 'admission' )
-			);
-			$seed_sql = null === $seed_json ? 'NULL' : $wpdb->prepare( '%s', $seed_json );
-			$key_sql  = null === $legacy_key ? 'NULL' : $wpdb->prepare( '%s', $legacy_key );
-			$inserted = $wpdb->query(
-				$wpdb->prepare(
-					"INSERT INTO %i (warmed_at, meta, warmup_type, queue_state, seed_tree, legacy_key)
-				 SELECT %s, %s, %s, %s, $seed_sql, $key_sql WHERE $fence",
-					$table_name,
-					$warmed_at,
-					$meta_json,
-					$warmup_type,
-					null === $seed_tree ? 'legacy' : 'building'
+		$seed_json = null === $seed_tree ? null : wp_json_encode( $seed_tree );
+		if ( false === $seed_json ) {
+			return false;
+		}
+		$packet = (int) $wpdb->get_var( 'SELECT @@SESSION.max_allowed_packet' );
+		if ( $packet < 4096 || $wpdb->last_error ) {
+			return false;
+		}
+		$chunk_size = min( 16384, (int) ( ( $packet - 2048 ) / 2 ) );
+		$chunked    = null !== $seed_json && strlen( $seed_json ) > $chunk_size;
+		// A JSON string is deliberately invalid to pre-1.4.4 tree readers. An old
+		// in-flight worker must fail closed, never enqueue descriptor keys as URLs.
+		$stored = $chunked ? wp_json_encode(
+			'cw-seed-chunks:' . wp_json_encode(
+				array(
+					'cw_seed_chunks' => 1,
+					'bytes'          => strlen( $seed_json ),
+					'sha256'         => hash( 'sha256', $seed_json ),
 				)
-			);
-
-			if ( $inserted ) {
-				$wpdb->suppress_errors( $previous );
+			)
+		) : $seed_json;
+		$connection = (int) $wpdb->get_var( 'SELECT CONNECTION_ID()' );
+		$owner = self::$admission_connection ?? 0;
+		$previous    = $wpdb->suppress_errors();
+		$transaction = false;
+		try {
+			for ( $offset = 0; $offset < 60; $offset++ ) {
+				$warmed_at                  = wp_date( 'Y-m-d H:i:s', $timestamp + $offset );
+				$warm_up_meta['start_date'] = $warmed_at;
+				$meta_json                  = wp_json_encode( $warm_up_meta );
+				if ( false === $meta_json ) {
+					return false;
+				}
+				// SQL escaping can double byte length; reject oversized metadata early.
+				if ( 2 * ( strlen( $meta_json ) + strlen( $stored ?? '' ) + strlen( $legacy_key ?? '' ) ) + 2048 >= $packet ) {
+					return false;
+				}
+				if ( $chunked ) {
+					if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+						return false;
+					}
+					$transaction = true;
+				}
+				$inserted = $wpdb->query(
+					$wpdb->prepare(
+						"INSERT INTO %i (warmed_at, meta, warmup_type, queue_state, seed_tree, legacy_key)
+						 SELECT %s, %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, '')
+						 WHERE CONNECTION_ID() = %d AND (%d = 0 OR (CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID()))",
+						$table_name,
+						$warmed_at,
+						$meta_json,
+						$warmup_type,
+						null === $seed_tree ? 'legacy' : 'building',
+						$stored ?? '',
+						$legacy_key ?? '',
+						$connection,
+						$owner,
+						$owner,
+						self::get_lock_name( 'admission' )
+					)
+				);
+				$id       = (int) $wpdb->insert_id;
+				if ( ! $inserted ) {
+					// Only timestamp collisions warrant another allocation attempt.
+					$error = $wpdb->last_error;
+					if ( $transaction ) {
+						$wpdb->query( 'ROLLBACK' );
+						$transaction = false;
+					}
+					if ( false === strpos( $error, 'Duplicate entry' ) || false === strpos( $error, 'warmed_at' ) ) {
+						return false;
+					}
+					continue;
+				}
+				if ( $chunked ) {
+					$parts = self::get_tables_prefix() . 'warm_up_seeds';
+					$length = strlen( $seed_json );
+					for ( $position = 0, $part = 0; $position < $length; $position += $chunk_size, $part++ ) {
+						$hex = bin2hex( substr( $seed_json, $position, $chunk_size ) );
+						if ( 1 !== $wpdb->query( $wpdb->prepare( 'INSERT INTO %i (list_id, part, payload) SELECT %d, %d, UNHEX(%s) WHERE CONNECTION_ID() = %d AND (%d = 0 OR (CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID()))', $parts, $id, $part, $hex, $connection, $owner, $owner, self::get_lock_name( 'admission' ) ) ) ) {
+							return false;
+						}
+					}
+					// A wpdb reconnect rolls back the old transaction; never acknowledge it.
+					if ( '1' !== (string) $wpdb->get_var( $wpdb->prepare( 'SELECT CONNECTION_ID() = %d AND (%d = 0 OR (CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID()))', $connection, $owner, $owner, self::get_lock_name( 'admission' ) ) ) || false === $wpdb->query( 'COMMIT' ) ) {
+						return false;
+					}
+					$transaction = false;
+					if ( '1' !== (string) $wpdb->get_var( $wpdb->prepare( 'SELECT CONNECTION_ID() = %d AND (%d = 0 OR (CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID()))', $connection, $owner, $owner, self::get_lock_name( 'admission' ) ) ) ) {
+						return false;
+					}
+				}
 				self::delete_excess_warm_ups( $warmed_at, $warmup_type );
-
 				return array(
-					'id'        => (int) $wpdb->insert_id,
+					'id'        => $id,
 					'warmed_at' => $warmed_at,
 					'meta'      => $warm_up_meta,
 				);
 			}
+		} finally {
+			if ( $transaction ) {
+				$wpdb->query( 'ROLLBACK' );
+			}
+			$wpdb->suppress_errors( $previous );
 		}
-
-		$wpdb->suppress_errors( $previous );
-
 		return false;
+	}
+
+	/**
+	 * Read a durable manifest through bounded result rows, including old inline seeds.
+	 *
+	 * Chunk descriptors contain byte length and SHA-256 of the complete JSON. Missing,
+	 * reordered or corrupted parts fail closed; callers retain the run for recovery.
+	 * The decoded graph still needs to fit PHP memory, as required by the crawler.
+	 *
+	 * @param int $id Warm-up identifier.
+	 * @return array Complete seed graph or legacy migration envelope.
+	 * @throws \RuntimeException When a read fails or a manifest is incomplete.
+	 */
+	public static function read_warm_up_seed( int $id ): array {
+		global $wpdb;
+		$table = self::get_tables_prefix() . 'warm_ups_list';
+		$size  = min( 16384, max( 1024, (int) $wpdb->get_var( 'SELECT @@SESSION.max_allowed_packet' ) - 2048 ) );
+		$json  = '';
+		for ( $offset = 1; ; $offset += $size ) {
+			$row = $wpdb->get_row( $wpdb->prepare( 'SELECT SUBSTRING(CAST(seed_tree AS BINARY), %d, %d) FROM %i WHERE id = %d', $offset, $size, $table, $id ), ARRAY_N );
+			$piece = $row[0] ?? null;
+			if ( null === $piece || $wpdb->last_error ) {
+				throw new \RuntimeException( 'Could not read warm-up seed; retained for recovery.' );
+			}
+			$json .= $piece;
+			if ( strlen( $piece ) < $size ) {
+				break;
+			}
+		}
+		$tree = json_decode( $json, true );
+		if ( is_string( $tree ) && 0 === strpos( $tree, 'cw-seed-chunks:' ) ) {
+			$tree = json_decode( substr( $tree, strlen( 'cw-seed-chunks:' ) ), true );
+			if ( ! is_array( $tree ) || ! isset( $tree['cw_seed_chunks'] ) || 1 !== $tree['cw_seed_chunks'] || ! isset( $tree['bytes'], $tree['sha256'] ) || ! is_int( $tree['bytes'] ) || $tree['bytes'] < 1 || ! is_string( $tree['sha256'] ) ) {
+				throw new \RuntimeException( 'Invalid chunk descriptor; retained for recovery.' );
+			}
+			$descriptor = $tree;
+			$json       = '';
+			$parts      = self::get_tables_prefix() . 'warm_up_seeds';
+			// Read slices even if a server's packet limit was lowered after publication.
+			for ( $part = 0, $received = 0; $received < $descriptor['bytes']; $part++ ) {
+				for ( $offset = 1; ; $offset += $size ) {
+					$row = $wpdb->get_row( $wpdb->prepare( 'SELECT SUBSTRING(payload, %d, %d) FROM %i WHERE list_id = %d AND part = %d', $offset, $size, $parts, $id, $part ), ARRAY_N );
+					$piece = $row[0] ?? null;
+					if ( null === $piece || $wpdb->last_error || ( 1 === $offset && '' === $piece ) ) {
+						throw new \RuntimeException( 'Incomplete warm-up seed; retained for recovery.' );
+					}
+					$json .= $piece;
+					$received += strlen( $piece );
+					if ( strlen( $piece ) < $size ) {
+						break;
+					}
+				}
+			}
+			if ( strlen( $json ) !== $descriptor['bytes'] || ! hash_equals( $descriptor['sha256'], hash( 'sha256', $json ) ) ) {
+				throw new \RuntimeException( 'Corrupt warm-up seed; retained for recovery.' );
+			}
+			$tree = json_decode( $json, true );
+		}
+		if ( ! is_array( $tree ) ) {
+			throw new \RuntimeException( 'Invalid persisted warm-up seed graph; retained for recovery.' );
+		}
+		return $tree;
+	}
+	/**
+	 * Reclaim chunks only after their manifest is durably retired.
+	 *
+	 * At most twenty parents are reclaimed per recovery pass. A failed deletion
+	 * is safe to retry: null seed_tree proves publication or cancellation already
+	 * persisted, and the worker fence prevents a stale process from deleting data.
+	 * Parent retention and uninstall additionally cascade/remove this table.
+	 *
+	 * @return void
+	 * @throws \RuntimeException When the read, deletion or ownership check fails.
+	 */
+	public static function discard_published_seed_chunks(): void {
+		global $wpdb;
+		self::require_process_lock();
+		$parts = self::get_tables_prefix() . 'warm_up_seeds';
+		$list  = self::get_tables_prefix() . 'warm_ups_list';
+		$ids   = $wpdb->get_col( $wpdb->prepare( 'SELECT DISTINCT chunks.list_id FROM %i AS chunks INNER JOIN %i AS runs ON runs.id = chunks.list_id WHERE runs.seed_tree IS NULL LIMIT 20', $parts, $list ) );
+		if ( $wpdb->last_error ) {
+			throw new \RuntimeException( 'Could not inspect retired seed chunks.' );
+		}
+		foreach ( $ids as $id ) {
+			if ( false === $wpdb->query( $wpdb->prepare( 'DELETE chunks FROM %i AS chunks INNER JOIN %i AS runs ON runs.id = chunks.list_id WHERE chunks.list_id = %d AND runs.seed_tree IS NULL AND CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID()', $parts, $list, $id, self::$process_connection, self::get_lock_name( 'process' ) ) ) ) {
+				throw new \RuntimeException( 'Could not reclaim retired seed chunks.' );
+			}
+		}
+		self::assert_process_lock();
 	}
 }

@@ -254,7 +254,7 @@ final class Migrations {
 				$prefix = DB::WARMUP_TYPE_UNSCHEDULED === $type ? 'cache-warmer-unscheduled-' : 'cache-warmer-';
 				$read   = static function( string $suffix ) use ( $prefix, $use_cache ) {
 					$cached = $use_cache ? wp_cache_get( $prefix . $suffix ) : false;
-					return false !== $cached ? $cached : Cache_Warmer::$options->get_dynamic( $prefix . $suffix );
+					return false !== $cached ? $cached : self::read_legacy_option( $prefix . $suffix );
 				};
 				$state  = $read( 'links-tree-leftovers' );
 				if ( false === $state || [] === $state ) {
@@ -292,6 +292,35 @@ final class Migrations {
 			}
 		} finally {
 			DB::release_admission_lock();
+		}
+	}
+	/**
+	 * Read old serialized state without returning a packet-sized option row.
+	 *
+	 * Direct reads deliberately bypass node-local option caches. Legacy workers
+	 * must be drained during cutover so all slices describe the same value.
+	 * A failed slice is never mistaken for an absent option.
+	 *
+	 * @param string $name Exact legacy option name.
+	 * @return mixed Decoded legacy value, or false when the option is absent.
+	 * @throws \RuntimeException When the database cannot read an option slice.
+	 */
+	private static function read_legacy_option( string $name ) {
+		global $wpdb;
+		$value = '';
+		for ( $offset = 1; ; $offset += 1024 ) {
+			$row = $wpdb->get_row( $wpdb->prepare( 'SELECT SUBSTRING(CAST(option_value AS BINARY), %d, 1024) FROM %i WHERE option_name = %s', $offset, $wpdb->options, $name ), ARRAY_N );
+			$piece = $row[0] ?? null;
+			if ( $wpdb->last_error || ( null === $piece && 1 !== $offset ) ) {
+				throw new \RuntimeException( 'Could not read legacy state; source retained.' );
+			}
+			if ( null === $piece ) {
+				return false;
+			}
+			$value .= $piece;
+			if ( strlen( $piece ) < 1024 ) {
+				return maybe_unserialize( $value );
+			}
 		}
 	}
 }

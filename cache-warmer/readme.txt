@@ -2,7 +2,7 @@
 Contributors: tmmtechnology
 Tags: cache, warming, cloudflare, redis, object cache
 Tested up to: 7.0.0
-Stable tag: 1.4.3
+Stable tag: 1.4.4
 Requires at least: 6.5
 Requires PHP: 7.4
 License: GPLv3
@@ -59,6 +59,11 @@ Visits website pages to warm (create) the cache if you have any caching solution
 [wp@tmm.ventures](mailto:wp@tmm.ventures)
 
 == Changelog ==
+
+= 1.4.4 2026-10-30 =
+* Fix large legacy queue upgrades exceeding the database packet limit by storing seed manifests in bounded chunks.
+* Preserve complete pending queues across interrupted transfers and verify their integrity before resuming.
+* Stop retrying non-collision SQL failures and reclaim seed chunks after successful publication.
 
 = 1.4.3 2026-10-30 =
 

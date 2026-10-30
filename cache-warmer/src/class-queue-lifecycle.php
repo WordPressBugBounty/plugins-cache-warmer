@@ -72,14 +72,20 @@ final class Queue_Lifecycle {
 	public static function recover(): void {
 		global $wpdb;
 		DB::require_process_lock();
+		DB::discard_published_seed_chunks();
 		$table = DB::get_tables_prefix() . 'warm_ups_list';
 		$logs  = DB::get_tables_prefix() . 'warm_ups_logs';
 		$runs  = $wpdb->get_results(
-			"SELECT * FROM $table WHERE queue_state = 'building'
-			 OR (queue_state = 'cancelled' AND EXISTS (
-			 SELECT 1 FROM $logs WHERE list_id = $table.id AND warm_date IS NULL))
-			 OR (queue_state IN ('ready', 'finalizing') AND NOT EXISTS (
-			 SELECT 1 FROM $logs WHERE list_id = $table.id AND warm_date IS NULL)) ORDER BY id LIMIT 20",
+			$wpdb->prepare(
+				"SELECT id, queue_state, meta, warmup_type FROM %i AS runs WHERE queue_state = 'building'
+				 OR (queue_state = 'cancelled' AND EXISTS (
+				 SELECT 1 FROM %i WHERE list_id = runs.id AND warm_date IS NULL))
+				 OR (queue_state IN ('ready', 'finalizing') AND NOT EXISTS (
+				 SELECT 1 FROM %i WHERE list_id = runs.id AND warm_date IS NULL)) ORDER BY id LIMIT 20",
+				$table,
+				$logs,
+				$logs
+			),
 			ARRAY_A
 		);
 		if ( $wpdb->last_error ) {
@@ -92,10 +98,7 @@ final class Queue_Lifecycle {
 				continue;
 			}
 			if ( 'building' === $run['queue_state'] ) {
-				$tree = json_decode( $run['seed_tree'], true );
-				if ( ! is_array( $tree ) ) {
-					throw new \RuntimeException( 'Invalid persisted warm-up seed graph; retained for recovery.' );
-				}
+				$tree = DB::read_warm_up_seed( $id );
 				$phase = 0;
 				if ( isset( $tree['legacy_format'] ) ) {
 					$phase = $tree['retry_phase'] ? 1 : 0;
@@ -112,6 +115,7 @@ final class Queue_Lifecycle {
 					Tree::delete_the_first_leaf( $tree );
 				}
 				self::transition( $id, 'ready', 'building', true );
+				DB::discard_published_seed_chunks();
 			}
 			if ( ! DB::warmup_has_pending_links( $id ) ) {
 				self::finish( $id, (array) json_decode( $run['meta'], true ), $run['warmup_type'] );

@@ -61,7 +61,8 @@ final class DB {
 	 * Reconciles acknowledged but missing tables before resuming the ordered
 	 * history. Existing rows are preserved; missing-table contents cannot be
 	 * recovered by schema repair. Callers serialize execution with the site
-	 * migration lock. SQL failures leave a retryable checkpoint and log.
+	 * migration lock. SQL failures leave a retryable checkpoint and log. Missing list containers
+	 * are recovered in bounded batches without deleting logs or guessing settings.
 	 *
 	 * @return void
 	 * @throws \RuntimeException When schema metadata or option persistence fails.
@@ -89,7 +90,38 @@ final class DB {
             $max_retries = 5;
             $failed      = false;
 
+			$log_lists_checked = false;
             foreach ( $migrations_to_run as $migration_to_run ) {
+				// DDL can validate older foreign keys too. Repair before starting its
+				// transaction: bounded recovery must survive an interrupted upgrade.
+				if ( ! $log_lists_checked && (
+					preg_match( '/ALTER\s+TABLE\s+`?' . preg_quote( self::get_tables_prefix() . 'warm_ups_logs', '/' ) . '`?\s/i', $migration_to_run ) ||
+					'SELECT 1 /* Reconcile orphaned warm-up logs. */' === $migration_to_run
+				) ) {
+					try {
+						$restored          = self::restore_missing_log_lists();
+						$log_lists_checked = true;
+						if ( $restored ) {
+							$db_migrations_log[] = array(
+								'migration_number' => $migration_number,
+								'query'            => 'Recover orphaned warm-up list containers',
+								'time_before'      => gmdate( 'Y-m-d H:i:s' ),
+								'time_after'       => '',
+								'error'            => "Preserved $restored missing lists in recovery state; original run settings are unavailable. Logs are retained and not processed or automatically pruned.",
+							);
+						}
+					} catch ( \RuntimeException $error ) {
+						$db_migrations_log[] = array(
+							'migration_number' => $migration_number,
+							'query'            => 'Recover orphaned warm-up list containers',
+							'time_before'      => gmdate( 'Y-m-d H:i:s' ),
+							'time_after'       => '',
+							'error'            => $error->getMessage(),
+						);
+						break;
+					}
+				}
+
                 $retries = 0;
 
                 $queries = explode( ';', $migration_to_run );
@@ -246,6 +278,105 @@ final class DB {
             Cache_Warmer::$options->set( 'db-migration-log', $db_migrations_log );
         }
     }
+
+	/**
+	 * Restore missing list containers before InnoDB validates historical logs.
+	 *
+	 * Requires the caller's site migration lock and drained old-version workers.
+	 * At most 100 missing parents are restored per request, before implicit-commit
+	 * DDL. A retry discovers only remaining orphans. Log IDs, payloads,
+	 * completion flags and references are never rewritten or deleted. Recovery
+	 * containers are excluded from processing and automatic retention. The lost
+	 * list metadata cannot be reconstructed; warmed_at is a synthetic recovery
+	 * timestamp, allocated after existing dates to avoid unique-key collisions.
+	 * Zero references are preserved by temporarily enabling NO_AUTO_VALUE_ON_ZERO.
+	 * Foreign-key checks stay enabled. SQL errors stop migration, retaining both
+	 * original logs and any containers already durably restored.
+	 *
+	 * @return int Number of restored containers.
+	 * @throws \RuntimeException On query failure or when another batch is needed.
+	 */
+	private static function restore_missing_log_lists(): int {
+		global $wpdb;
+
+		$logs  = self::get_tables_prefix() . 'warm_ups_logs';
+		$lists = self::get_tables_prefix() . 'warm_ups_list';
+		$ids   = $wpdb->get_col(
+			$wpdb->prepare(
+				'SELECT DISTINCT logs.list_id FROM %i AS logs LEFT JOIN %i AS lists
+				ON lists.id = logs.list_id WHERE lists.id IS NULL ORDER BY logs.list_id LIMIT 101',
+				$logs,
+				$lists
+			)
+		);
+		if ( $wpdb->last_error ) {
+			throw new \RuntimeException( 'Could not inspect orphaned warm-up logs; original rows retained.' );
+		}
+		if ( ! $ids ) {
+			return 0;
+		}
+
+		// Add the existing lifecycle column early so incomplete settings are never
+		// guessed. Its historical additive migration will safely recognize it.
+		$column = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+				AND TABLE_NAME = %s AND COLUMN_NAME = 'queue_state'",
+				$lists
+			)
+		);
+		if ( $wpdb->last_error ) {
+			throw new \RuntimeException( 'Could not inspect warm-up recovery state.' );
+		}
+		if ( null === $column && false === $wpdb->query(
+			$wpdb->prepare( "ALTER TABLE %i ADD COLUMN queue_state VARCHAR(16) NOT NULL DEFAULT 'legacy'", $lists )
+		) ) {
+			throw new \RuntimeException( 'Could not prepare warm-up recovery containers.' );
+		}
+
+		$mode_row = $wpdb->get_row( 'SELECT @@SESSION.sql_mode AS value, CONNECTION_ID() AS owner', ARRAY_A );
+		if ( $wpdb->last_error || null === $mode_row ) {
+			throw new \RuntimeException( 'Could not read SQL mode for warm-up log recovery.' );
+		}
+		$mode          = $mode_row['value'];
+		$recovery_mode = '' === $mode ? 'NO_AUTO_VALUE_ON_ZERO' : $mode . ',NO_AUTO_VALUE_ON_ZERO';
+		if ( false === $wpdb->query( $wpdb->prepare( 'SET SESSION sql_mode = %s', $recovery_mode ) ) ) {
+			throw new \RuntimeException( 'Could not preserve zero list IDs during warm-up log recovery.' );
+		}
+		try {
+			foreach ( array_slice( $ids, 0, 100 ) as $id ) {
+				$date = $wpdb->get_var(
+					$wpdb->prepare(
+						'SELECT DATE_ADD(GREATEST(COALESCE(MAX(warmed_at), UTC_TIMESTAMP()), UTC_TIMESTAMP()), INTERVAL 1 SECOND) FROM %i',
+						$lists
+					)
+				);
+				if ( $wpdb->last_error || ! $date ) {
+					throw new \RuntimeException( 'Could not allocate a recovery date for orphaned warm-up logs.' );
+				}
+				if ( 1 !== $wpdb->query(
+					$wpdb->prepare(
+						"INSERT INTO %i (id, warmed_at, queue_state) SELECT %s, %s, 'recovery' WHERE CONNECTION_ID() = %d
+						AND FIND_IN_SET('NO_AUTO_VALUE_ON_ZERO', @@SESSION.sql_mode) > 0",
+						$lists,
+						$id,
+						$date,
+						$mode_row['owner']
+					)
+				) ) {
+					throw new \RuntimeException( 'Could not restore a missing warm-up list; original logs retained.' );
+				}
+			}
+		} finally {
+			if ( false === $wpdb->query( $wpdb->prepare( 'SET SESSION sql_mode = %s', $mode ) ) ) {
+				throw new \RuntimeException( 'Could not restore SQL mode after warm-up log recovery.' );
+			}
+		}
+		if ( count( $ids ) > 100 ) {
+			throw new \RuntimeException( 'Restored 100 missing warm-up lists; migration will resume on the next request. Original logs retained.' );
+		}
+		return count( $ids );
+	}
 
 	/**
 	 * Rewind a stale schema checkpoint to the first missing table's creation.
@@ -591,6 +722,9 @@ final class DB {
 				FOREIGN KEY (list_id) REFERENCES {$table_prefix}warm_ups_list(id) ON DELETE CASCADE
 			) ENGINE=InnoDB",
 
+			// Also inspect sites where the engine accepted old orphaned references.
+			'SELECT 1 /* Reconcile orphaned warm-up logs. */',
+
 		);
 
 		return $migrations;
@@ -641,8 +775,8 @@ final class DB {
 	 * A zero-day policy removes other completed scheduled runs when admitting a
 	 * scheduled run; nonzero policies use a date cutoff. Triggered batches and
 	 * sentinel/external log cleanup use a cutoff of at least one day. Run deletion
-	 * preserves active publication states, legacy-transfer receipts and runs with
-	 * pending rows. Sentinel/external log deletion preserves cancelled rows.
+	 * preserves recovery containers, active publication states, legacy-transfer
+	 * receipts and runs with pending rows. Sentinel/external log deletion preserves cancelled rows.
 	 *
 	 * Deleting a run cascades to its logs. Leaves User-Agent dictionary rows in
 	 * place to avoid racing a concurrent log insert. Does not acquire locks,
@@ -676,7 +810,7 @@ final class DB {
 					"
                         DELETE FROM %i
                         WHERE warmup_type = 'scheduled' AND warmed_at != %s
-                        AND queue_state NOT IN ('building', 'ready', 'finalizing')
+                        AND queue_state NOT IN ('building', 'ready', 'finalizing', 'recovery')
                         AND legacy_key IS NULL
                         AND NOT EXISTS (
                             SELECT 1 FROM %i AS pending
@@ -695,7 +829,7 @@ final class DB {
 					"
                     DELETE FROM %i
                     WHERE warmup_type = 'scheduled' AND warmed_at < %s
-                    AND queue_state NOT IN ('building', 'ready', 'finalizing')
+                    AND queue_state NOT IN ('building', 'ready', 'finalizing', 'recovery')
                     AND legacy_key IS NULL
                     AND NOT EXISTS (
                         SELECT 1 FROM %i AS pending
@@ -717,7 +851,7 @@ final class DB {
 					DELETE list
 					FROM %i AS list
 					WHERE list.warmup_type = 'unscheduled'
-					AND list.queue_state NOT IN ('building', 'ready', 'finalizing')
+					AND list.queue_state NOT IN ('building', 'ready', 'finalizing', 'recovery')
 					AND list.legacy_key IS NULL
 					AND list.warmed_at != '0000-00-00 00:00:00'
 					AND list.warmed_at < %s
@@ -980,7 +1114,8 @@ final class DB {
 	 * @param bool $scheduled_only Whether to exclude triggered queues. Default false.
 	 *
 	 * @return array Raw database result containing associative log rows plus
-	 *               serialized run meta and warmup_type; empty array for no rows.
+	 *               serialized run meta, warmup_type and authoritative warmup_started_at;
+	 *               empty array for no rows.
 	 *
 	 * @throws \RuntimeException When published queue rows cannot be read.
 	 */
@@ -995,7 +1130,7 @@ final class DB {
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
 				"
-			            SELECT logs.*, list.meta, list.warmup_type
+			            SELECT logs.*, list.meta, list.warmup_type, list.warmed_at AS warmup_started_at
 		            FROM %i AS logs
 		            INNER JOIN %i AS list
 		            ON logs.list_id = list.id
@@ -1110,7 +1245,7 @@ final class DB {
 				$wpdb->prepare(
 					"DELETE list FROM %i AS list
 				 WHERE list.warmup_type = 'unscheduled'
-				 AND list.queue_state NOT IN ('building', 'ready', 'finalizing')
+				 AND list.queue_state NOT IN ('building', 'ready', 'finalizing', 'recovery')
 				 AND list.legacy_key IS NULL
 				 AND NOT EXISTS (
 					 SELECT 1 FROM %i AS pending
@@ -1158,7 +1293,8 @@ final class DB {
 	 * Find the newest scheduled run that blocks admission of another run.
 	 *
 	 * Includes building, ready and finalizing runs even before they expose queue
-	 * rows, plus any scheduled run with an unfinished row. Reads shared database
+	 * rows, plus any scheduled run with an unfinished row except a recovery
+	 * container whose original settings are unavailable. Reads shared database
 	 * state without acquiring an admission lock; callers serialize admission.
 	 *
 	 * @return array|null Associative warm-up list row, or null when none qualifies.
@@ -1177,6 +1313,7 @@ final class DB {
 					SELECT list.*
 					FROM %i AS list
 					WHERE list.warmup_type = 'scheduled'
+					AND list.queue_state != 'recovery'
 					AND (list.queue_state IN ('building', 'ready', 'finalizing') OR EXISTS (
 						SELECT 1 FROM %i AS logs
 						WHERE logs.list_id = list.id AND logs.warm_date IS NULL

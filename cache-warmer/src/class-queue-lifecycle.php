@@ -65,6 +65,8 @@ final class Queue_Lifecycle {
 	 * Publication replays the entire manifest. Queue deduplication makes a partial
 	 * previous expansion safe, and building rows cannot be fetched until ready.
 	 * Finalization is replayable until its durable completed marker is written.
+	 * A missing metadata start date uses the existing row identity; no new run
+	 * or timestamp is invented.
 	 *
 	 * @return void
 	 * @throws \RuntimeException On invalid manifests or failed persistence.
@@ -77,7 +79,7 @@ final class Queue_Lifecycle {
 		$logs  = DB::get_tables_prefix() . 'warm_ups_logs';
 		$runs  = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT id, queue_state, meta, warmup_type FROM %i AS runs WHERE queue_state = 'building'
+				"SELECT id, queue_state, meta, warmup_type, warmed_at FROM %i AS runs WHERE queue_state = 'building'
 				 OR (queue_state = 'cancelled' AND EXISTS (
 				 SELECT 1 FROM %i WHERE list_id = runs.id AND warm_date IS NULL))
 				 OR (queue_state IN ('ready', 'finalizing') AND NOT EXISTS (
@@ -118,7 +120,14 @@ final class Queue_Lifecycle {
 				DB::discard_published_seed_chunks();
 			}
 			if ( ! DB::warmup_has_pending_links( $id ) ) {
-				self::finish( $id, (array) json_decode( $run['meta'], true ), $run['warmup_type'] );
+				$meta = json_decode( $run['meta'], true );
+				if ( ! is_array( $meta ) ) {
+					throw new \RuntimeException( 'Invalid warm-up metadata JSON; stored data retained.' );
+				}
+				if ( empty( $meta['start_date'] ) ) {
+					$meta['start_date'] = $run['warmed_at'];
+				}
+				self::finish( $id, $meta, $run['warmup_type'] );
 			}
 		}
 		if ( 20 === count( $runs ) ) {

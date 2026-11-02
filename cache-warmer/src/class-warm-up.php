@@ -22,6 +22,16 @@ final class Warm_Up {
      */
     const BATCH_SIZE = 1;
 
+	/**
+	 * Default HTTP timeout in seconds for new runs and incomplete saved settings.
+	 *
+	 * A zero timeout becomes one second in WordPress's HTTP transport. Use this
+	 * bounded default when recovering absent/empty/zero values instead.
+	 *
+	 * @var int
+	 */
+	const DEFAULT_REQUEST_TIMEOUT = 15;
+
     /**
      * Returns page HTML.
      *
@@ -349,6 +359,97 @@ final class Warm_Up {
 	}
 
 	/**
+	 * Normalize historical optional settings before any request or discovery.
+	 *
+	 * Missing/null optional values and the old empty-string collection sentinel
+	 * mean disabled/empty, never today's potentially different site settings.
+	 * Existing values and unknown checkpoints are retained. Required identity
+	 * is validated; empty depth/speed settings retain their zero cast. Missing or
+	 * zero timeouts use the documented default rather than a one-second HTTP limit.
+	 * Invalid values throw with the field name only, without exposing cookies or header values.
+	 *
+	 * @param array $meta Persisted run configuration.
+	 * @return array Normalized configuration, including unchanged checkpoints.
+	 * @throws \RuntimeException When a setting has an unsupported representation.
+	 */
+	public static function normalize_run_meta( array $meta ): array {
+		$booleans = array(
+			'visit_second_time_without_custom_url_params',
+			'visit_second_time_without_cookies',
+			'rewrite_to_https',
+			'add_entry_points_sites_sitemaps',
+			'excluded_pages_use_regex_match',
+			'exclude_pages_with_warmed_canonical',
+			'use_external_warmer',
+		);
+		foreach ( $booleans as $key ) {
+			$value = $meta[ $key ] ?? false;
+			if ( ! in_array( $value, array( true, false, 0, 1, '0', '1', '' ), true ) ) {
+				throw new \RuntimeException( 'Invalid warm-up setting: ' . $key );
+			}
+			$meta[ $key ] = (bool) $value;
+		}
+		foreach ( array( 'cookies', 'request_headers', 'url_params', 'excluded_pages', 'external_warmup_request_args', 'assets_preloading' ) as $key ) {
+			$value = $meta[ $key ] ?? array();
+			if ( '' === $value ) {
+				$value = array();
+			}
+			if ( ! is_array( $value ) ) {
+				throw new \RuntimeException( 'Invalid warm-up setting: ' . $key );
+			}
+			$meta[ $key ] = $value;
+		}
+		foreach ( array( 'scripts', 'styles', 'fonts', 'images' ) as $asset ) {
+			$value = $meta['assets_preloading'][ $asset ] ?? false;
+			if ( ! in_array( $value, array( true, false, 0, 1, '0', '1', '' ), true ) ) {
+				throw new \RuntimeException( 'Invalid warm-up setting: assets_preloading.' . $asset );
+			}
+			$meta['assets_preloading'][ $asset ] = (bool) $value;
+		}
+		foreach ( array( 'depth', 'timeout', 'speed_limit' ) as $key ) {
+			// Older workers cast absent/null/empty numeric settings to zero. Keep
+			// that meaning; do not substitute today's administrator settings.
+			if ( ! isset( $meta[ $key ] ) || '' === $meta[ $key ] ) {
+				$meta[ $key ] = 0;
+			}
+			if ( is_bool( $meta[ $key ] ) ) {
+				$meta[ $key ] = (int) $meta[ $key ];
+			}
+			if ( ! is_numeric( $meta[ $key ] ) || $meta[ $key ] < 0 ) {
+				throw new \RuntimeException( 'Invalid warm-up setting: ' . $key );
+			}
+		}
+		if ( 0 === (int) $meta['timeout'] ) {
+			$meta['timeout'] = self::DEFAULT_REQUEST_TIMEOUT;
+		}
+		if ( empty( $meta['start_date'] ) || ! is_string( $meta['start_date'] ) ) {
+			throw new \RuntimeException( 'Invalid warm-up setting: start_date' );
+		}
+		// Empty discovery agents must not invent extra visits. Existing queued
+		// visits retain and validate their own immutable user-agent identity.
+		$meta['user_agents'] = $meta['user_agents'] ?? array();
+		if ( ! is_array( $meta['user_agents'] ) ) {
+			throw new \RuntimeException( 'Invalid warm-up setting: user_agents' );
+		}
+		foreach ( $meta['user_agents'] as $agent ) {
+			if ( ! is_string( $agent ) ) {
+				throw new \RuntimeException( 'Invalid warm-up setting: user_agents' );
+			}
+		}
+		foreach ( $meta['request_headers'] as $header ) {
+			if ( ! is_array( $header ) || ! isset( $header['name'], $header['value'] ) || ! is_string( $header['name'] ) || ! is_scalar( $header['value'] ) ) {
+				throw new \RuntimeException( 'Invalid warm-up setting: request_headers' );
+			}
+		}
+		foreach ( $meta['excluded_pages'] as $excluded ) {
+			if ( ! is_string( $excluded ) ) {
+				throw new \RuntimeException( 'Invalid warm-up setting: excluded_pages' );
+			}
+		}
+		return $meta;
+	}
+
+	/**
 	 * Retrieve a queued visit and persist discovery before acknowledging its log.
 	 *
 	 * Deletes an equivalent already-retrieved visit or records an exclusion
@@ -363,8 +464,8 @@ final class Warm_Up {
 	 * cancellation again before discovery. Updates diagnostic options and groups
 	 * external-request arguments in the referenced metadata for later use.
 	 *
-	 * Expects normalized run settings and visit metadata; does not validate their
-	 * complete shape. Does not acquire the process lock or start a transaction.
+	 * Normalizes historical optional settings and validates required run/visit
+	 * metadata before any HTTP request. Does not acquire the process lock or start a transaction.
 	 * The worker caller owns serialization. Earlier HTTP requests, metadata and
 	 * discovered rows survive a later failure and may be encountered on replay.
 	 * Exceptions from persistence, request and parsing dependencies propagate.
@@ -374,6 +475,8 @@ final class Warm_Up {
 	 * @param string $link     URL to retrieve with this visit's headers and cookies.
 	 * @param int    $depth    Current traversal depth, compared with the run limit.
 	 * @param array  $meta     Run settings, modified by reference for throttling and external requests.
+	 *                        Missing/null optional cookies or headers mean no custom values;
+	 *                        configured arrays are preserved, other types remain invalid.
 	 * @param array  $link_meta Visit identity metadata, including user_agent and optional cookie bypass.
 	 *
 	 * @return void
@@ -388,11 +491,15 @@ final class Warm_Up {
 		array &$meta,
 		array $link_meta
 	) {
+		$meta = self::normalize_run_meta( $meta );
+		if ( ! isset( $link_meta['user_agent'] ) || ! is_string( $link_meta['user_agent'] ) ) {
+			throw new \RuntimeException( 'Invalid warm-up visit setting: user_agent' );
+		}
 		$max_depth                            = (int) $meta['depth'];
 		$warm_up_start_date                   = $meta['start_date'];
 		$url_params                           = $meta['url_params'];
 		$timeout                              = (int) $meta['timeout'];
-		$cookies                              = $meta['cookies'];
+		$cookies                              = $meta['cookies'] ?? array();
 		$visit_second_time_without_url_params = $meta['visit_second_time_without_custom_url_params'];
 		$visit_second_time_without_cookies    = isset( $meta['visit_second_time_without_cookies'] ) &&
 												$meta['visit_second_time_without_cookies'];
@@ -419,7 +526,7 @@ final class Warm_Up {
 
 		$add_entry_points_sites_sitemaps = $meta['add_entry_points_sites_sitemaps'];
 
-		$request_headers = $meta['request_headers'];
+		$request_headers = $meta['request_headers'] ?? array();
 
 		// Start.
 
@@ -1017,7 +1124,9 @@ final class Warm_Up {
 	 * prepares retries and finalizes completed runs. Schedules further delivery
 	 * when needed, including work belonging to other runs. These steps are not
 	 * one transaction: HTTP requests and earlier writes may survive a later
-	 * failure. Always releases an acquired process lock on exit.
+	 * failure. Missing run identity is restored from the selected row and
+	 * checkpointed before one immediate recovery attempt; later failures retain
+	 * normal backoff. Always releases an acquired process lock on exit.
 	 *
 	 * @return void
 	 *
@@ -1039,7 +1148,12 @@ final class Warm_Up {
 			}
 
 			$link_to_warm = $links_to_warm[0];
-			$meta         = (array) json_decode( $link_to_warm['meta'], true );
+			$decoded_meta = json_decode( $link_to_warm['meta'], true );
+			if ( ! is_array( $decoded_meta ) ) {
+				self::schedule_async_warmup( time() + 30 * MINUTE_IN_SECONDS );
+				throw new \RuntimeException( 'Invalid warm-up metadata JSON; stored data retained.' );
+			}
+			$meta         = $decoded_meta;
 			$link_meta    = (array) json_decode( $link_to_warm['link_meta'], true );
 			// Attempt phase belongs to the URL, not to the whole crawl: a retry can
 			// discover a new URL which has not had its first attempt yet.
@@ -1049,9 +1163,24 @@ final class Warm_Up {
 			}
 			$log_id    = (int) $link_to_warm['id'];
 			$warmup_id = (int) $link_to_warm['list_id'];
+			if ( empty( $meta['start_date'] ) ) {
+				// Recover identity from the existing row, never the current clock.
+				// Persist once before retrying so a later failure still backs off.
+				$meta['start_date'] = $link_to_warm['warmup_started_at'];
+				$meta = self::normalize_run_meta( $meta );
+				unset( $meta['worker_retry_after'], $meta['worker_error_type'] );
+				if ( ! DB::update_warm_up_meta( $warmup_id, $meta ) ) {
+					throw new \RuntimeException( 'Could not restore warm-up run identity; queued URLs retained.' );
+				}
+			}
 			Queue_Lifecycle::activate( $warmup_id );
 			$is_unscheduled = DB::WARMUP_TYPE_UNSCHEDULED === ( $link_to_warm['warmup_type'] ?? '' );
 			$speed_limit    = (int) ( $meta['speed_limit'] ?? 1 );
+
+			if ( ! empty( $meta['worker_retry_after'] ) && time() < (int) $meta['worker_retry_after'] ) {
+				self::schedule_async_warmup( (int) $meta['worker_retry_after'] );
+				return;
+			}
 
 			if ( isset( $meta['pause_warming_up_to'] ) ) {
 				if ( time() < (int) $meta['pause_warming_up_to'] ) {
@@ -1093,6 +1222,7 @@ final class Warm_Up {
 				return;
 			}
 
+			unset( $meta['worker_retry_after'], $meta['worker_error_type'] );
 			DB::update_warm_up_meta( $warmup_id, $meta );
 
 			if ( ! $is_unscheduled && DB::was_warmup_stopped( $warmup_id ) ) {
@@ -1138,6 +1268,23 @@ final class Warm_Up {
 			if ( DB::get_links_to_warm( 1 ) ) {
 				self::schedule_async_warmup();
 			}
+		} catch ( \Throwable $error ) {
+			// Retain the pending URL and rate-limit catchable failures. A hard kill
+			// is recovered by the existing periodic lifecycle maintenance instead.
+			if ( isset( $warmup_id, $meta ) ) {
+				try {
+					$meta['worker_retry_after'] = time() + 30 * MINUTE_IN_SECONDS;
+					$meta['worker_error_type']  = get_class( $error );
+					if ( DB::update_warm_up_meta( $warmup_id, $meta ) ) {
+						self::schedule_async_warmup( $meta['worker_retry_after'] );
+					}
+				} catch ( \Throwable $recovery_error ) {
+					// Preserve the original failure, especially a lost-ownership error.
+					// Maintenance can rediscover retained work after storage recovers.
+					throw $error;
+				}
+			}
+			throw $error;
 		} finally {
 			DB::release_process_lock();
 		}
@@ -1237,43 +1384,25 @@ final class Warm_Up {
     }
 
 	/**
-	 * Derive scheduled-run status and repair missing warming delivery.
+	 * Report the active run rather than the global historical failure count.
 	 *
-	 * Reports failure when a pending scheduled row exists and the global failed
-	 * warming-action count exceeds that run's recorded counter. Otherwise reports
-	 * progress while a scheduled run blocks admission, or completion when none
-	 * does. This is not a status lookup for a supplied run ID or triggered queue.
+	 * Retained worker errors remain retrying until a successful visit clears the
+	 * marker. Both active states prohibit a competing scheduled crawl. Missing
+	 * delivery is restored without moving an existing delayed action forward.
+	 * Periodic maintenance independently repairs delivery without this UI read.
 	 *
-	 * The read also requests an async action when scheduled work is pending but
-	 * no warming action exists. Expects stored metadata to contain the failed
-	 * action counter; does not validate or repair malformed metadata here.
-	 *
-	 * @return string One of 'failed', 'in-progress' or 'complete'.
-	 *
-	 * @throws Exception When an admission-state read or scheduling dependency fails.
+	 * @return string One of 'retrying', 'in-progress' or 'complete'.
+	 * @throws Exception When queue discovery or scheduler persistence fails.
 	 */
 	public static function get_last_warm_up_state() {
-		$links_to_warm = DB::get_links_to_warm( 1, true );
-
-		$is_not_finished = (bool) DB::get_active_scheduled_warmup();
-		$is_failed       = $links_to_warm && self::action_scheduler_get_failed_warm_ups_counter() > json_decode( $links_to_warm[0]['meta'] )->failed_warm_ups_counter;
-
-		if ( $is_failed ) {
-			$state = 'failed';
-		} elseif ( $is_not_finished ) {
-			$state = 'in-progress';
-		} else {
-			$state = 'complete';
+		$run = DB::get_active_scheduled_warmup();
+		if ( ! $run ) {
+			return 'complete';
 		}
-
-		// Restore scheduler delivery when pending scheduled work has no action.
-		if (
-			$links_to_warm &&
-			! as_has_scheduled_action( Cache_Warmer::HOOK_NAME )
-		) {
-			self::schedule_async_warmup();
+		$meta = json_decode( $run['meta'], true );
+		if ( ! as_has_scheduled_action( Cache_Warmer::HOOK_NAME ) ) {
+			self::schedule_async_warmup( is_array( $meta ) ? ( $meta['worker_retry_after'] ?? false ) : time() + 30 * MINUTE_IN_SECONDS );
 		}
-
-		return $state;
+		return ! is_array( $meta ) || ! empty( $meta['worker_error_type'] ) ? 'retrying' : 'in-progress';
 	}
 }

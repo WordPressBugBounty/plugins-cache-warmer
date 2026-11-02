@@ -197,6 +197,10 @@ $was_stopped_by_hand = Cache_Warmer::$options->get( 'cache-warmer-last-warmup-wa
                 <div class="cache-warmer-progress-row mb-10 <?php echo 'in-progress' === $state ? '' : 'cache-warmer-hidden'; ?>" data-testid="cache-warmer-state-progress">
                     <h2><?php esc_html_e( 'Warm-up is in progress...', 'cache-warmer' ); ?></h2>
                 </div>
+				<div class="cache-warmer-retrying-row mb-10 <?php echo 'retrying' === $state ? '' : 'cache-warmer-hidden'; ?>" data-testid="cache-warmer-state-retrying">
+					<h2><?php esc_html_e( 'Warm-up interrupted; automatic retry pending.', 'cache-warmer' ); ?></h2>
+					<p><?php esc_html_e( 'Pending URLs are retained. Worker errors retry after 30 minutes; repeated errors need investigation in Scheduled Actions.', 'cache-warmer' ); ?></p>
+				</div>
                 <div class="cache-warmer-done-row mb-10 <?php // @codingStandardsIgnoreLine
                 echo 'complete' === $state && Logging::get_warm_ups_logs_list() && ! $was_stopped_by_hand ?
                     '' : 'cache-warmer-hidden';
@@ -221,12 +225,12 @@ $was_stopped_by_hand = Cache_Warmer::$options->get( 'cache-warmer-last-warmup-wa
                 <div class="cache-warmer-row">
                     <input type="submit"
                            class="button button-primary cache-warmer-start
-                    <?php echo 'in-progress' !== $state ? '' : 'cache-warmer-hidden'; ?>"
+                    <?php echo ! in_array( $state, array( 'in-progress', 'retrying' ), true ) ? '' : 'cache-warmer-hidden'; ?>"
                            value="<?php esc_html_e( 'Start a new Warm-Up', 'cache-warmer' ); // @codingStandardsIgnoreLine ?>"
                            data-testid="cache-warmer-start">
                     <input type="submit"
                            class="button button-primary cache-warmer-stop cache-warmer-button-red
-                    <?php echo 'in-progress' === $state ? '' : 'cache-warmer-hidden'; ?>"
+                    <?php echo in_array( $state, array( 'in-progress', 'retrying' ), true ) ? '' : 'cache-warmer-hidden'; ?>"
                            value="<?php esc_html_e( 'Stop Warm-Up', 'cache-warmer' ); ?>"
                            data-testid="cache-warmer-stop">
                 </div>

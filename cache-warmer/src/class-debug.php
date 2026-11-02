@@ -57,11 +57,45 @@ final class Debug {
 			'last-failed-to-retrieve-link'         => Cache_Warmer::$options->get( 'last-failed-to-retrieve-link' ),
 			'last-retrieved-link'                  => Cache_Warmer::$options->get( 'last-retrieved-link' ),
 			'last-warmup-data'                     => $latest_warmup_data,
+			'active-run-configuration'             => self::summarize_run_configuration( DB::get_active_scheduled_warmup() ),
 			'last-warmup-failed-to-retrieve-links' => Warm_Up::get_failed_to_retrieve_links( $warmup_id ),
 			'last-warmup-retrieved-links'          => Warm_Up::get_retrieved_links( $warmup_id ),
 		);
 
 		return $data;
+	}
+
+	/**
+	 * Summarize active configuration without exposing headers, cookies or agents.
+	 *
+	 * Reads only the supplied row. Numeric settings include their persisted type
+	 * and numeric value; unsupported values expose their type only. No defaults
+	 * are applied, so diagnostics distinguish missing fields from explicit null.
+	 *
+	 * @param array|null $run Active database row with id, queue_state and JSON meta.
+	 * @return array|null Bounded diagnostic fields, or null when no run is active.
+	 */
+	public static function summarize_run_configuration( ?array $run ): ?array {
+		if ( null === $run ) {
+			return null;
+		}
+		$meta   = json_decode( $run['meta'], true );
+		$result = array(
+			'id'                 => (int) $run['id'],
+			'queue_state'        => $run['queue_state'],
+			'metadata_is_object' => is_array( $meta ),
+		);
+		foreach ( array( 'depth', 'timeout', 'speed_limit', 'start_date', 'user_agents', 'worker_retry_after', 'worker_error_type' ) as $key ) {
+			$present                  = is_array( $meta ) && array_key_exists( $key, $meta );
+			$value                    = $present ? $meta[ $key ] : null;
+			$result['fields'][ $key ] = array(
+				'present'       => $present,
+				'type'          => gettype( $value ),
+				'numeric_value' => is_numeric( $value ) ? $value + 0 : null,
+				'item_count'    => is_array( $value ) ? count( $value ) : null,
+			);
+		}
+		return $result;
 	}
 
 	/**

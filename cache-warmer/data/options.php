@@ -85,7 +85,7 @@ return apply_filters(
 		 */
 		'cache-warmer-setting-timeout'                     => [
 			'autoload' => false,
-			'default'  => 15,
+			'default'  => \Cache_Warmer\Warm_Up::DEFAULT_REQUEST_TIMEOUT,
 		],
 
 		/*

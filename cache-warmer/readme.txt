@@ -2,7 +2,7 @@
 Contributors: tmmtechnology
 Tags: cache, warming, cloudflare, redis, object cache
 Tested up to: 7.0.0
-Stable tag: 1.4.4
+Stable tag: 1.4.10
 Requires at least: 6.5
 Requires PHP: 7.4
 License: GPLv3
@@ -59,6 +59,30 @@ Visits website pages to warm (create) the cache if you have any caching solution
 [wp@tmm.ventures](mailto:wp@tmm.ventures)
 
 == Changelog ==
+
+= 1.4.10 2026-11-03 =
+* Restore the documented 15-second HTTP timeout for retained warm-ups with missing or zero timeouts, preserving valid configured limits and queued work.
+* Verify delayed responses and successful retries through the real WordPress HTTP transport while retaining failure history.
+
+= 1.4.9 2026-11-03 =
+* Recover missing legacy warm-up start dates from the existing run identity without resetting queued visits.
+* Persist identity recovery before retrying so subsequent failures retain bounded backoff, including interrupted finalization.
+
+= 1.4.8 2026-11-02 =
+* Preserve historical zero/empty behavior for retained warm-ups with missing or null numeric settings and discovery agents.
+* Add bounded, redacted active-run configuration diagnostics without exposing cookies, headers or user-agent values.
+
+= 1.4.7 2026-11-02 =
+* Normalize legacy optional warm-up settings before requests and canonical or asset discovery, preserving queued URLs and configured values.
+* Keep interrupted work recoverable with delayed worker retries and preserve malformed metadata for investigation.
+* Report the active warm-up instead of historical scheduler failures, and keep progress refreshing during recovery.
+
+= 1.4.6 2026-11-02 =
+* Fix queued warm-ups with missing or null optional request headers while preserving configured headers and pending visits.
+
+= 1.4.5 2026-11-02 =
+* Fix queued warm-ups failing when optional cookie metadata is missing or null, while preserving configured cookies.
+* Recover missing warm-up list containers during database upgrades without deleting their logs; retain incomplete recovery data separately from runnable work.
 
 = 1.4.4 2026-10-30 =
 * Fix large legacy queue upgrades exceeding the database packet limit by storing seed manifests in bounded chunks.

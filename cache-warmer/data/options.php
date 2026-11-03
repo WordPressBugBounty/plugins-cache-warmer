@@ -85,7 +85,9 @@ return apply_filters(
 		 */
 		'cache-warmer-setting-timeout'                     => [
 			'autoload' => false,
-			'default'  => \Cache_Warmer\Warm_Up::DEFAULT_REQUEST_TIMEOUT,
+			// Keep option declarations loadable during a cold inactive uninstall.
+			// The timeout contract test checks agreement with the worker fallback.
+			'default'  => 15,
 		],
 
 		/*

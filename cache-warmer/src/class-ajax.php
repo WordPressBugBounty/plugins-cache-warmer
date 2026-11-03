@@ -67,6 +67,7 @@ final class AJAX {
             'import_settings',
             'reset_settings',
             'get_debug_data',
+			'recover_run_metadata',
             'insert_my_cookies',
             'reschedule_intervals',
         ];
@@ -887,6 +888,49 @@ final class AJAX {
 
         wp_send_json( [ 'html' => $html ] );
     }
+
+	/**
+	 * Applies an explicitly reviewed, digest-bound run metadata recovery.
+	 *
+	 * Requires an administrator nonce and POST. Accepts a positive run_id, the
+	 * exact metadata_sha256 shown by diagnostics and a JSON object missing_settings
+	 * containing only evidenced missing request settings. Preserves damaged bytes
+	 * atomically and never deletes or resets queued/completed visits. Errors expose
+	 * no configuration values. Successful recovery requests scheduler delivery;
+	 * an existing pending action and its retry timestamp are preserved.
+	 *
+	 * @return void Sends a JSON response and terminates.
+	 */
+	public static function recover_run_metadata() {
+		self::verify_admin_request();
+		if ( 'POST' !== sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ?? '' ) ) ) {
+			wp_send_json_error( array( 'message' => 'POST required.' ), 405 );
+		}
+		$id      = isset( $_POST['run_id'] ) ? absint( $_POST['run_id'] ) : 0;
+		$digest  = isset( $_POST['metadata_sha256'] ) && is_string( $_POST['metadata_sha256'] ) ? sanitize_text_field( wp_unslash( $_POST['metadata_sha256'] ) ) : '';
+		$raw     = isset( $_POST['missing_settings'] ) && is_string( $_POST['missing_settings'] ) ? wp_unslash( $_POST['missing_settings'] ) : '{}';
+		$missing = json_decode( $raw, true );
+		if ( ! is_array( $missing ) || '{' !== substr( ltrim( $raw ), 0, 1 ) ) {
+			wp_send_json_error( array( 'message' => 'Missing settings must be a JSON object.' ), 400 );
+		}
+		try {
+			$recovered = DB::recover_run_metadata( $id, $digest, $missing );
+			if ( $recovered ) {
+				Warm_Up::schedule_async_warmup();
+			}
+		} catch ( \Throwable $error ) {
+			wp_send_json_error( array( 'message' => 'Recovery refused; verify the run identity and required settings.' ), 409 );
+		}
+		if ( ! $recovered ) {
+			wp_send_json_error( array( 'message' => 'Recovery not confirmed; retry after inspecting current diagnostics.' ), 409 );
+		}
+		wp_send_json_success(
+			array(
+				'run_id'                     => $id,
+				'original_metadata_retained' => true,
+			)
+		);
+	}
 
 	/**
 	 * Imports registered plugin settings from an encoded request payload.

@@ -66,7 +66,8 @@ final class Queue_Lifecycle {
 	 * previous expansion safe, and building rows cannot be fetched until ready.
 	 * Finalization is replayable until its durable completed marker is written.
 	 * A missing metadata start date uses the existing row identity; no new run
-	 * or timestamp is invented.
+	 * or timestamp is invented. Recognized metadata truncation is backed up and
+	 * missing fields are restored from current settings before finalization.
 	 *
 	 * @return void
 	 * @throws \RuntimeException On invalid manifests or failed persistence.
@@ -122,7 +123,16 @@ final class Queue_Lifecycle {
 			if ( ! DB::warmup_has_pending_links( $id ) ) {
 				$meta = json_decode( $run['meta'], true );
 				if ( ! is_array( $meta ) ) {
-					throw new \RuntimeException( 'Invalid warm-up metadata JSON; stored data retained.' );
+					if ( ! DB::recover_run_metadata_using_current_settings( $id, hash( 'sha256', $run['meta'] ) ) ) {
+						throw new \RuntimeException( 'Could not recover finalization metadata; stored data retained.' );
+					}
+					$stored     = $wpdb->get_var( $wpdb->prepare( 'SELECT meta FROM %i WHERE id = %d', $table, $id ) );
+					$read_error = $wpdb->last_error;
+					DB::require_process_lock();
+					$meta = $read_error ? null : json_decode( (string) $stored, true );
+					if ( ! is_array( $meta ) ) {
+						throw new \RuntimeException( 'Could not read recovered finalization metadata; backup retained.' );
+					}
 				}
 				if ( empty( $meta['start_date'] ) ) {
 					$meta['start_date'] = $run['warmed_at'];
@@ -172,6 +182,10 @@ final class Queue_Lifecycle {
 	/**
 	 * Persist a completion summary before acknowledging the lifecycle.
 	 *
+	 * Recovered metadata may mark external request history incomplete. Such a
+	 * run can finish its retained queue, but must not replace the last complete
+	 * reusable external crawl with a partial request history.
+	 *
 	 * @param int                 $id   Run ID.
 	 * @param array<string,mixed> $meta Final metadata and retry checkpoint.
 	 * @param string              $type Run kind.
@@ -202,7 +216,7 @@ final class Queue_Lifecycle {
 		self::transition( $id, 'finalizing', 'ready' );
 		if ( DB::WARMUP_TYPE_SCHEDULED === $type ) {
 			self::write_summary( $id, 'last-success-warmup-id', $meta['start_date'] );
-			if ( ! empty( $meta['external_warmup_request_args'] ) ) {
+			if ( empty( $meta['external_history_incomplete'] ) && ! empty( $meta['external_warmup_request_args'] ) ) {
 				self::write_summary( $id, 'last-external-warmup-request-args-id', $meta['start_date'] );
 				self::write_summary(
 					$id,

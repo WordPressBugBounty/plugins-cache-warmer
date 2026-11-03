@@ -725,6 +725,10 @@ final class DB {
 			// Also inspect sites where the engine accepted old orphaned references.
 			'SELECT 1 /* Reconcile orphaned warm-up logs. */',
 
+			// Request-history metadata can exceed the historical 64 KiB TEXT limit.
+			"ALTER TABLE {$table_prefix}warm_ups_list MODIFY COLUMN meta LONGTEXT DEFAULT NULL",
+			"ALTER TABLE {$table_prefix}warm_ups_list ADD COLUMN meta_recovery_backup LONGBLOB DEFAULT NULL",
+
 		);
 
 		return $migrations;
@@ -811,7 +815,7 @@ final class DB {
                         DELETE FROM %i
                         WHERE warmup_type = 'scheduled' AND warmed_at != %s
                         AND queue_state NOT IN ('building', 'ready', 'finalizing', 'recovery')
-                        AND legacy_key IS NULL
+                        AND legacy_key IS NULL AND meta_recovery_backup IS NULL
                         AND NOT EXISTS (
                             SELECT 1 FROM %i AS pending
                             WHERE pending.list_id = %i.id AND pending.warm_date IS NULL
@@ -830,7 +834,7 @@ final class DB {
                     DELETE FROM %i
                     WHERE warmup_type = 'scheduled' AND warmed_at < %s
                     AND queue_state NOT IN ('building', 'ready', 'finalizing', 'recovery')
-                    AND legacy_key IS NULL
+                    AND legacy_key IS NULL AND meta_recovery_backup IS NULL
                     AND NOT EXISTS (
                         SELECT 1 FROM %i AS pending
                         WHERE pending.list_id = %i.id AND pending.warm_date IS NULL
@@ -852,7 +856,7 @@ final class DB {
 					FROM %i AS list
 					WHERE list.warmup_type = 'unscheduled'
 					AND list.queue_state NOT IN ('building', 'ready', 'finalizing', 'recovery')
-					AND list.legacy_key IS NULL
+					AND list.legacy_key IS NULL AND list.meta_recovery_backup IS NULL
 					AND list.warmed_at != '0000-00-00 00:00:00'
 					AND list.warmed_at < %s
 					AND NOT EXISTS (
@@ -1525,17 +1529,180 @@ final class DB {
 	}
 
 	/**
+	 * Reads the current metadata column capacity for administrator diagnostics.
+	 *
+	 * Queries only the current database and plugin list table. Returns bounded
+	 * schema facts, never configuration contents or SQL error text. A failed or
+	 * missing schema lookup is reported as unavailable, not as an empty column.
+	 * This method does not modify schema, rows, options or queue state.
+	 *
+	 * @return array Column type and byte capacity, or an unavailable status.
+	 */
+	public static function get_run_metadata_storage(): array {
+		global $wpdb;
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT DATA_TYPE AS data_type, CHARACTER_OCTET_LENGTH AS capacity_bytes
+				 FROM information_schema.COLUMNS
+				 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s',
+				self::get_tables_prefix() . 'warm_ups_list',
+				'meta'
+			),
+			ARRAY_A
+		);
+		if ( $wpdb->last_error || ! is_array( $row ) ) {
+			return array( 'available' => false );
+		}
+		return array(
+			'available'      => true,
+			'data_type'      => $row['data_type'],
+			'capacity_bytes' => (int) $row['capacity_bytes'],
+		);
+	}
+
+	/**
+	 * Atomically preserves damaged metadata and installs a reviewed candidate.
+	 *
+	 * Serializes with workers using the shared process lock. The caller's digest
+	 * must match the exact current bytes. A retry after an acknowledged-or-lost
+	 * successful write returns true when the retained backup has that digest;
+	 * it never rewinds metadata subsequently changed by a worker. Automatic
+	 * retention excludes runs carrying this backup. No URL/history row changes.
+	 *
+	 * @param int    $id Immutable warm-up row ID.
+	 * @param string $digest SHA-256 of reviewed damaged metadata.
+	 * @param array  $missing Explicit, evidenced missing request settings.
+	 * @return bool True if applied/already applied; false on contention or storage failure.
+	 * @throws \RuntimeException When identity, state or configuration is unsupported.
+	 */
+	public static function recover_run_metadata( int $id, string $digest, array $missing ): bool {
+		if ( ! self::acquire_process_lock() ) {
+			return false;
+		}
+		try {
+			return self::recover_run_metadata_locked( $id, $digest, $missing );
+		} finally {
+			self::release_process_lock();
+		}
+	}
+
+	/**
+	 * Repairs recognized truncation using current settings for missing fields.
+	 *
+	 * Called by an already locked worker, before any HTTP visit. Reads settings
+	 * only after checking the retained record identity; backs up original bytes
+	 * atomically. Existing fields and queued URL identities are never replaced.
+	 *
+	 * @param int    $id Immutable warm-up row ID.
+	 * @param string $digest SHA-256 of the selected damaged metadata.
+	 * @return bool Whether recovery is applied or was already durably applied.
+	 * @throws \RuntimeException When ownership, settings or damage is unsupported.
+	 */
+	public static function recover_run_metadata_using_current_settings( int $id, string $digest ): bool {
+		return self::recover_run_metadata_locked( $id, $digest, null );
+	}
+
+	/**
+	 * Shares the fenced backup-and-replacement operation across recovery callers.
+	 *
+	 * @param int        $id Immutable warm-up row ID.
+	 * @param string     $digest Expected original SHA-256.
+	 * @param array|null $missing Explicit missing settings, or null to read current settings.
+	 * @return bool Whether the durable replacement is verified.
+	 * @throws \RuntimeException When ownership, identity or configuration is invalid.
+	 */
+	private static function recover_run_metadata_locked( int $id, string $digest, ?array $missing ): bool {
+		global $wpdb;
+
+		self::require_process_lock();
+		if ( ! preg_match( '/^[a-f0-9]{64}$/D', $digest ) || $id < 1 ) {
+			throw new \RuntimeException( 'Invalid metadata recovery identity.' );
+		}
+		$table = self::get_tables_prefix() . 'warm_ups_list';
+		$run   = $wpdb->get_row( $wpdb->prepare( 'SELECT meta, meta_recovery_backup, warmed_at, queue_state FROM %i WHERE id = %d', $table, $id ), ARRAY_A );
+		if ( $wpdb->last_error || ! is_array( $run ) ) {
+			return false;
+		}
+		if ( null !== $run['meta_recovery_backup'] ) {
+			if ( hash_equals( $digest, hash( 'sha256', $run['meta_recovery_backup'] ) ) ) {
+				return true;
+			}
+			throw new \RuntimeException( 'An earlier recovery backup is already retained.' );
+		}
+		if ( ! hash_equals( $digest, hash( 'sha256', (string) $run['meta'] ) ) || ! in_array( $run['queue_state'], array( 'ready', 'legacy', 'finalizing' ), true ) ) {
+			throw new \RuntimeException( 'Warm-up metadata or state changed; inspect it again before recovery.' );
+		}
+		$automatic = null === $missing;
+		if ( $automatic ) {
+			$missing = Metadata_Recovery::missing_current_settings( $run['meta'] );
+		}
+		$meta = Metadata_Recovery::candidate( $run['meta'], $run['warmed_at'], $missing );
+		if ( $automatic ) {
+			$meta['metadata_recovery_source']  = 'current-settings';
+			$meta['metadata_recovered_fields'] = array_keys( $missing );
+		}
+		$json = self::encode_run_metadata( $meta );
+		if ( false === $json ) {
+			return false;
+		}
+		$fence  = self::process_fence();
+		$result = $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE %i SET meta_recovery_backup = meta, meta = %s
+				 WHERE id = %d AND meta_recovery_backup IS NULL AND BINARY meta = BINARY %s AND $fence",
+				$table,
+				$json,
+				$id,
+				$run['meta']
+			)
+		);
+		self::assert_process_lock();
+		if ( 1 !== $result ) {
+			return false;
+		}
+		$stored = $wpdb->get_row( $wpdb->prepare( 'SELECT meta, meta_recovery_backup FROM %i WHERE id = %d', $table, $id ), ARRAY_A );
+		self::assert_process_lock();
+		return ! $wpdb->last_error && is_array( $stored ) && $json === $stored['meta'] && $run['meta'] === $stored['meta_recovery_backup'];
+	}
+
+	/**
+	 * Encodes complete metadata only when the live column can retain every byte.
+	 *
+	 * Rejects unsupported JSON values and unavailable/narrow schema before any
+	 * write. The live schema check also protects installations whose upgrade has
+	 * not finished. This does not retry or change SQL modes. Packet or connection
+	 * failures remain the responsibility of the subsequent checked database write.
+	 *
+	 * @param array $meta Complete run metadata.
+	 * @return string|false Encoded metadata, or false without changing stored data.
+	 */
+	private static function encode_run_metadata( array $meta ) {
+		$json = wp_json_encode( $meta );
+		if ( false === $json ) {
+			return false;
+		}
+		$storage = self::get_run_metadata_storage();
+		if ( ! $storage['available'] || strlen( $json ) > $storage['capacity_bytes'] ) {
+			return false;
+		}
+		return $json;
+	}
+
+	/**
 	 * Updates metadata using the immutable numeric warm-up identifier.
 	 *
 	 * Replaces the stored JSON metadata, subject to the current process fence,
-	 * then verifies lock ownership. Does not merge metadata, acquire a lock, or
+	 * then verifies lock ownership. Encoding or column-capacity failures return
+	 * false before writing, retaining the previous configuration. Does not merge
+	 * metadata, acquire a lock, or
 	 * start a transaction. A zero-row update is considered successful, including
 	 * when the identifier does not exist or the stored value is unchanged.
 	 *
 	 * @param int   $warmup_id    Immutable warm-up row ID.
 	 * @param array $warm_up_meta Complete replacement metadata, encoded as JSON.
 	 *
-	 * @return bool True unless the database query returns false.
+	 * @return bool False on encoding, capacity lookup/overflow or database write failure.
 	 *
 	 * @throws \RuntimeException When the post-write ownership check fails. An
 	 *                           earlier write is not rolled back by this check.
@@ -1543,13 +1710,17 @@ final class DB {
 	public static function update_warm_up_meta( int $warmup_id, array $warm_up_meta ): bool {
 		global $wpdb;
 
+		$json = self::encode_run_metadata( $warm_up_meta );
+		if ( false === $json ) {
+			return false;
+		}
 		$table  = self::get_tables_prefix() . 'warm_ups_list';
 		$fence  = self::process_fence();
 		$result = $wpdb->query(
 			$wpdb->prepare(
 				"UPDATE %i SET `meta` = %s WHERE `id` = %d AND $fence",
 				$table,
-				wp_json_encode( $warm_up_meta ),
+				$json,
 				$warmup_id
 			)
 		);
@@ -1967,16 +2138,23 @@ final class DB {
 	 * type. These writes are not transactional and this method acquires no lock.
 	 *
 	 * Suppresses database error display and restores the previous setting on the
-	 * normal return path. The query result itself is not checked: the return value
+	 * normal return path. Encoding failures or unavailable/insufficient column
+	 * capacity reject the request before retention or writes. The query result
+	 * itself is not checked: the return value
 	 * comes from wpdb's insert_id, not a separate persistence verification.
 	 *
 	 * @param string $warm_up_start_date Public start-date identifier used as the unique key.
 	 * @param array  $warm_up_meta       Complete replacement metadata, encoded as JSON.
 	 *
-	 * @return int|false Inserted or matched row ID, or false when insert_id is zero.
+	 * @return int|false Inserted/matched row ID; false on unsafe encoding/capacity or zero insert_id.
 	 */
 	public static function create_or_update_a_warm_up( string $warm_up_start_date, array $warm_up_meta ) {
 		global $wpdb;
+
+		$meta_json = self::encode_run_metadata( $warm_up_meta );
+		if ( false === $meta_json ) {
+			return false;
+		}
 
 		$prev = $wpdb->suppress_errors();
 
@@ -1989,8 +2167,6 @@ final class DB {
 		if ( self::WARMUP_TYPE_SCHEDULED === $type ) {
 			self::delete_excess_warm_ups( $warm_up_start_date );
 		}
-
-		$meta_json = wp_json_encode( $warm_up_meta );
 
 		$wpdb->query(
 			$wpdb->prepare(
@@ -2103,7 +2279,7 @@ final class DB {
 			for ( $offset = 0; $offset < 60; $offset++ ) {
 				$warmed_at                  = wp_date( 'Y-m-d H:i:s', $timestamp + $offset );
 				$warm_up_meta['start_date'] = $warmed_at;
-				$meta_json                  = wp_json_encode( $warm_up_meta );
+				$meta_json                  = self::encode_run_metadata( $warm_up_meta );
 				if ( false === $meta_json ) {
 					return false;
 				}

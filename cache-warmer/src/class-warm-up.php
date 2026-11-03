@@ -1115,6 +1115,11 @@ final class Warm_Up {
 	/**
 	 * Process at most one pending visit under the site-wide process lock.
 	 *
+	 * Non-positive saved speed limits are checkpointed from the current positive
+	 * site setting before HTTP. The previous value is retained in metadata; valid
+	 * run limits and existing recovery backups are unchanged. Invalid current
+	 * settings or failed writes stop processing with the queue retained.
+	 *
 	 * Defers delivery on lock contention. Once owned, recovers incomplete queue
 	 * lifecycle work, selects the next visit and applies its persisted pause and
 	 * speed limits before HTTP processing. The row's phase determines whether
@@ -1126,7 +1131,9 @@ final class Warm_Up {
 	 * one transaction: HTTP requests and earlier writes may survive a later
 	 * failure. Missing run identity is restored from the selected row and
 	 * checkpointed before one immediate recovery attempt; later failures retain
-	 * normal backoff. Always releases an acquired process lock on exit.
+	 * normal backoff. Recognized truncated JSON is backed up and recovered using
+	 * current settings only for missing members, before visiting any URL. Unknown
+	 * damage retains its bytes and backs off. Always releases the process lock.
 	 *
 	 * @return void
 	 *
@@ -1150,8 +1157,25 @@ final class Warm_Up {
 			$link_to_warm = $links_to_warm[0];
 			$decoded_meta = json_decode( $link_to_warm['meta'], true );
 			if ( ! is_array( $decoded_meta ) ) {
-				self::schedule_async_warmup( time() + 30 * MINUTE_IN_SECONDS );
-				throw new \RuntimeException( 'Invalid warm-up metadata JSON; stored data retained.' );
+				try {
+					if ( ! DB::recover_run_metadata_using_current_settings( (int) $link_to_warm['list_id'], hash( 'sha256', $link_to_warm['meta'] ) ) ) {
+						throw new \RuntimeException( 'Could not persist metadata recovery; stored data retained.' );
+					}
+					// Re-read durable state under the same lock; never process a
+					// speculative candidate after a failed or ambiguous write.
+					$refreshed = DB::get_links_to_warm( 1 );
+					if ( ! isset( $refreshed[0] ) || (int) $refreshed[0]['id'] !== (int) $link_to_warm['id'] ) {
+						throw new \RuntimeException( 'Queue changed during metadata recovery; retry required.' );
+					}
+					$link_to_warm = $refreshed[0];
+					$decoded_meta = json_decode( $link_to_warm['meta'], true );
+					if ( ! is_array( $decoded_meta ) ) {
+						throw new \RuntimeException( 'Invalid recovered metadata; original backup retained.' );
+					}
+				} catch ( \Throwable $error ) {
+					self::schedule_async_warmup( time() + 30 * MINUTE_IN_SECONDS );
+					throw $error;
+				}
 			}
 			$meta         = $decoded_meta;
 			$link_meta    = (array) json_decode( $link_to_warm['link_meta'], true );
@@ -1194,6 +1218,27 @@ final class Warm_Up {
 				unset( $meta['speed_limit_divider'], $meta['limit_crawl_speed_up_to'] );
 				$meta['speed_limit'] = (int) ( $meta['initial_speed_limit'] ?? $speed_limit );
 				$speed_limit         = $meta['speed_limit'];
+			}
+
+			// A persisted zero is invalid (the settings UI requires at least one).
+			// Repair under the worker lock before HTTP, retaining the old value
+			// for diagnosis. Valid per-run limits, including adaptive limits, win.
+			if ( $speed_limit < 1 ) {
+				$current_limit = filter_var(
+					Cache_Warmer::$options->get( 'setting-speed-limit' ),
+					FILTER_VALIDATE_INT,
+					array( 'options' => array( 'min_range' => 1 ) )
+				);
+				if ( false === $current_limit ) {
+					throw new \RuntimeException( 'Cannot recover warm-up speed limit: current setting must be a positive integer; queued URLs retained.' );
+				}
+				$meta['speed_limit_before_recovery'] = $meta['speed_limit'] ?? null;
+				$meta['speed_limit_recovery_source'] = 'current-settings';
+				$meta['speed_limit']                 = $current_limit;
+				$speed_limit                         = $current_limit;
+				if ( ! DB::update_warm_up_meta( $warmup_id, $meta ) ) {
+					throw new \RuntimeException( 'Could not persist recovered speed limit; queued URLs retained.' );
+				}
 			}
 
 			// Scheduler delivery is not a throttle: duplicate and early actions still

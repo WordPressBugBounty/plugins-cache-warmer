@@ -2,7 +2,7 @@
 Contributors: tmmtechnology
 Tags: cache, warming, cloudflare, redis, object cache
 Tested up to: 7.0.0
-Stable tag: 1.4.10
+Stable tag: 1.4.15
 Requires at least: 6.5
 Requires PHP: 7.4
 License: GPLv3
@@ -59,6 +59,29 @@ Visits website pages to warm (create) the cache if you have any caching solution
 [wp@tmm.ventures](mailto:wp@tmm.ventures)
 
 == Changelog ==
+
+= 1.4.15 2026-11-03 =
+
+* Recover non-positive saved warm-up speed limits from the current site setting before processing. Preserve valid run limits, queued visits and metadata recovery backups.
+
+= 1.4.14 2026-11-03 =
+
+* Automatically recover recognized truncated run metadata using current site settings only for missing fields. Preserve complete settings, queued URLs and an exact backup of the damaged data.
+
+= 1.4.13 2026-11-03 =
+
+* Explain unsupported metadata recovery with bounded structural diagnostics, without exposing stored request configuration or changing the retained queue.
+
+= 1.4.12 2026-11-03 =
+
+* Prevent large warm-up configurations from being truncated by widening metadata storage and rejecting failed JSON encoding or unsafe writes.
+* Add guarded administrator recovery for truncated request history, preserving the original metadata and all queued visits without resetting the warm-up.
+* Retain recovery backups during automatic cleanup and prevent incomplete request history from replacing a complete reusable crawl.
+* Fix timeout option declarations during uninstall when the plugin is inactive.
+
+= 1.4.11 2026-11-03 =
+
+* Add administrator diagnostics for warm-up configuration size, checksum, JSON errors and database column capacity without exposing configuration contents.
 
 = 1.4.10 2026-11-03 =
 * Restore the documented 15-second HTTP timeout for retained warm-ups with missing or zero timeouts, preserving valid configured limits and queued work.

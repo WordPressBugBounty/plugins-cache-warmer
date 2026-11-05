@@ -479,7 +479,7 @@ final class Warm_Up {
 	 *                        configured arrays are preserved, other types remain invalid.
 	 * @param array  $link_meta Visit identity metadata, including user_agent and optional cookie bypass.
 	 *
-	 * @return void
+	 * @return bool|null True for an acknowledged exclusion; null for other outcomes.
 	 *
 	 * @throws \RuntimeException When metadata cannot be persisted or ownership is lost.
 	 */
@@ -577,7 +577,7 @@ final class Warm_Up {
 				$user_agent
 			);
 
-			return;
+			return true;
 		}
 
 		$time_before_fetch = microtime( true );
@@ -1083,7 +1083,7 @@ final class Warm_Up {
 	 * Count non-cancelled visit completions newer than the one-minute cutoff.
 	 *
 	 * Uses site-local completion dates strictly greater than now minus sixty
-	 * seconds. Includes all success states, phases and visit types; this is a
+	 * seconds. Includes success and failure attempts but excludes skipped visits; this is a
 	 * row count, not necessarily the number of HTTP requests. Reads uncached
 	 * shared state and casts the database scalar to int. A failed/empty lookup
 	 * therefore returns zero rather than raising an explicit database exception.
@@ -1103,13 +1103,34 @@ final class Warm_Up {
 				'
 	                SELECT COUNT(*)
 	                FROM %i
-	                WHERE list_id = %d AND warm_date > %s AND is_cancelled = 0;
+	                WHERE list_id = %d AND warm_date > %s AND is_cancelled = 0 AND log_phase <> 2;
 	            ',
 				$table_name,
 				$warmup_id,
 				$current_time
 			)
 		);
+	}
+
+	/**
+	 * Drain a bounded batch of exclusions and perform at most one HTTP visit.
+	 *
+	 * Each step reacquires the shared database lock and reads durable state, so
+	 * another worker, a stop request or a crash cannot lose the remaining queue.
+	 * Stop after twenty steps or five seconds between steps. An individual HTTP
+	 * visit retains its saved timeout and is never followed by another visit in
+	 * this invocation. Pending continuations remain deduplicated by the scheduler.
+	 *
+	 * @return void
+	 * @throws \Throwable When processing or durable checkpointing fails.
+	 */
+	public static function process() {
+		$deadline = microtime( true ) + 5;
+		for ( $step = 0; $step < 20; ++$step ) {
+			if ( ! self::process_next_visit() || microtime( true ) >= $deadline ) {
+				return;
+			}
+		}
 	}
 
 	/**
@@ -1135,15 +1156,16 @@ final class Warm_Up {
 	 * current settings only for missing members, before visiting any URL. Unknown
 	 * damage retains its bytes and backs off. Always releases the process lock.
 	 *
-	 * @return void
+	 * @return bool Whether an exclusion was acknowledged and pending work may continue.
 	 *
-	 * @throws Exception When a database, lifecycle, HTTP-processing or scheduling
+	 * @throws \Throwable When a database, lifecycle, HTTP-processing or scheduling
 	 *                   dependency reports an exception; prior work is not rolled back.
+	 * @throws \RuntimeException When metadata validation or persistence fails.
 	 */
-	public static function process() {
+	private static function process_next_visit(): bool {
 		if ( ! DB::acquire_process_lock() ) {
 			self::schedule_async_warmup( time() + 5 );
-			return;
+			return false;
 		}
 
 		try {
@@ -1151,7 +1173,7 @@ final class Warm_Up {
 			$links_to_warm = DB::get_links_to_warm( 1 );
 
 			if ( ! isset( $links_to_warm[0] ) ) {
-				return;
+				return false;
 			}
 
 			$link_to_warm = $links_to_warm[0];
@@ -1203,13 +1225,13 @@ final class Warm_Up {
 
 			if ( ! empty( $meta['worker_retry_after'] ) && time() < (int) $meta['worker_retry_after'] ) {
 				self::schedule_async_warmup( (int) $meta['worker_retry_after'] );
-				return;
+				return false;
 			}
 
 			if ( isset( $meta['pause_warming_up_to'] ) ) {
 				if ( time() < (int) $meta['pause_warming_up_to'] ) {
 					self::schedule_async_warmup( (int) $meta['pause_warming_up_to'] );
-					return;
+					return false;
 				}
 				unset( $meta['pause_warming_up_to'] );
 			}
@@ -1245,10 +1267,10 @@ final class Warm_Up {
 			// have to obey the persisted queue policy before making an HTTP request.
 			if ( self::how_many_fetches_were_done_for_the_warmup( $warmup_id ) >= max( 1, $speed_limit ) ) {
 				self::schedule_async_warmup( time() + 10 );
-				return;
+				return false;
 			}
 
-			self::handle_a_link(
+			$skipped = self::handle_a_link(
 				$log_id,
 				$warmup_id,
 				$link_to_warm['log_url'],
@@ -1264,7 +1286,7 @@ final class Warm_Up {
 				if ( DB::get_links_to_warm( 1 ) ) {
 					self::schedule_async_warmup();
 				}
-				return;
+				return false;
 			}
 
 			unset( $meta['worker_retry_after'], $meta['worker_error_type'] );
@@ -1277,7 +1299,7 @@ final class Warm_Up {
 				if ( DB::get_links_to_warm( 1 ) ) {
 					self::schedule_async_warmup();
 				}
-				return;
+				return false;
 			}
 
 			if ( isset( $meta['pause_warming_up_to'] ) ) {
@@ -1293,7 +1315,7 @@ final class Warm_Up {
 				} else {
 					self::schedule_async_warmup();
 				}
-				return;
+				return true === $skipped && ! isset( $pause_warming_until );
 			}
 
 			if ( empty( $meta['retry_phase_started'] ) ) {
@@ -1304,7 +1326,7 @@ final class Warm_Up {
 
 				if ( $retries ) {
 					self::schedule_async_warmup( $pause_warming_until ?? false );
-					return;
+					return false;
 				}
 			}
 
@@ -1313,6 +1335,7 @@ final class Warm_Up {
 			if ( DB::get_links_to_warm( 1 ) ) {
 				self::schedule_async_warmup();
 			}
+			return false;
 		} catch ( \Throwable $error ) {
 			// Retain the pending URL and rate-limit catchable failures. A hard kill
 			// is recovered by the existing periodic lifecycle maintenance instead.

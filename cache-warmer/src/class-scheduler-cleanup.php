@@ -41,6 +41,7 @@ final class Scheduler_Cleanup {
 		}
 
 		$hooks           = array(
+			'cache_warmer_refresh_dashboard_statistics',
 			'cache_warmer_process',
 			'cache_warmer_process_interval',
 			'cache_warmer_process_posts_enqueue',

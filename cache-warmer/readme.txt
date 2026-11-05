@@ -1,64 +1,218 @@
 === Cache Warmer ===
 Contributors: tmmtechnology
-Tags: cache, warming, cloudflare, redis, object cache
+Tags: cache, cache preloading, performance, cloudflare, woocommerce
 Tested up to: 7.0.0
-Stable tag: 1.4.15
+Stable tag: 1.5.1
 Requires at least: 6.5
 Requires PHP: 7.4
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
-Visits website pages to warm (create) the cache if you have any caching solutions configured.
+Warm your WordPress cache before visitors arrive. Preload pages on a schedule, refresh published content and inspect every warm-up.
 
-== Settings ==
+== Description ==
 
-- Configure cache warming entry points and the depth of the warming;
-- Add all public site posts as entry points;
-- Add entry point sites sitemaps as entry points;
-- Select which types of assets to load, with 4 checkboxes: scripts, styles, images, fonts;
-- Set custom URL params (?foo=bar);
-- Set custom user agent;
-- Set custom request headers;
-- Set custom cookies;
-- Set connection timeout;
-- Set speed limit (pages to visit per minute);
-- Autorun Interval: to run the warming each N minutes;
-- Exclude pages (by substring or regex);
-- Rewrite URLs to HTTPS;
-- Visit pages second time without custom URL params (if they are set);
-- Warm-up posts (on their publication and edit (Can be seen in Logs -> Triggered)):
- - Set custom posts warming interval.
-- Store warm-up queues in MySQL so scheduled work is safe across interchangeable web nodes.
+**A fast cache only helps when the page is already in it.**
 
-== Additional ==
+After a cache expires or is cleared, the next visitor may have to wait while WordPress builds the page again. Cache Warmer visits your pages ahead of time, giving your existing caching system the opportunity to prepare a cached response before a customer, reader or campaign visitor arrives.
 
-- Adds a graph to your dashboard with page load time before and after the warming (2 lines) per day.
-- Cleans up Action Scheduler log after itself (older than 30 days for failed actions, and older than 2 days for completed actions).
+Choose the pages that matter, control the pace and see what happened. Start a warm-up when you need it, run it on a schedule, or queue published content after an edit.
 
-== External services ==
+**Cache Warmer complements your caching setup.** It does not create a page-cache engine or change which pages your cache considers eligible. It works by making HTTP requests that can populate a properly configured plugin, server or CDN cache.
 
-- Connect to paid service for warming from external global servers.
+= New in 1.5: faster warming queues, clearer progress =
 
-== Run from code ==
+**Spend less time managing the queue and more time warming pages.** Version 1.5 brings a substantial queue-processing performance improvement for large warm-up configurations. It avoids repeatedly sorting large configuration payloads and handles excluded URLs in bounded batches, while preserving queued work, recovery and configured HTTP visit limits.
 
-* Start: `\Cache_Warmer\AJAX::start_warm_up( false );`
-* Stop: `\Cache_Warmer\AJAX::stop_warm_up( false );`
+In one production observation on a large WooCommerce store, warming worker executions dropped from roughly 100 seconds to 1–3 seconds after the update. This measures individual background-worker executions, not page-load speed or total crawl duration. Results vary with the queue, hosting, page response times and scheduler availability.
 
-== Run from WP CLI ==
+Progress reporting now shows completion timestamps, elapsed time that includes pauses, clearly labelled average visit speed and skipped totals on every log page.
 
-* Start: `wp cache-warmer start`
-* Stop: `wp cache-warmer stop`
+= Prepare important pages before the next visit =
 
-== Required PHP extensions ==
+Warm your homepage, landing pages, articles and public product pages without manually opening them one by one. After a deployment or cache purge, start a run to help rebuild the cache for the pages you have selected.
 
-- json
-- simplexml (optional)
+This is especially useful when important pages receive too little regular traffic to stay warm on their own.
 
-== Bug reports / Questions / Suggestions ==
+= Warm the pages you choose =
 
-[wp@tmm.ventures](mailto:wp@tmm.ventures)
+Build a focused crawl or cover more of your public site:
+
+* Start from one or more URLs.
+* Include public posts, pages, custom post types and taxonomy archives.
+* Discover URLs through entry-point sitemaps.
+* Set how many link levels the crawler follows.
+* Exclude URLs with plain-text patterns or regular expressions.
+* Optionally skip pages whose canonical URL has already been warmed.
+
+Depth 0 visits entry points only. Use a larger depth when you want to discover linked pages, and set exclusions to keep the crawl focused.
+
+= Put repeat warming on a schedule =
+
+Set an automatic interval in minutes, or start a run manually from WordPress. Enable post-update warming to queue published content after publication or editing, with a configurable delay.
+
+Scheduled runs and post-triggered runs have separate histories, so you can see what ran and why. Background processing uses Action Scheduler.
+
+= Match the crawl to your hosting =
+
+Control the maximum pages per minute, request timeout, crawl depth and included assets. Start with a small group of pages, inspect the results and expand the crawl to suit your site's capacity.
+
+The speed setting is a ceiling, not a promised throughput. Response times and background-worker availability also determine how quickly a run completes.
+
+= See more than a completion message =
+
+Inspect visited URLs, successful and failed requests, HTTP response codes, error messages and request timings. When returned by the server, logs include cache headers such as `cf-cache-status`, `x-cache` and `X-WP-Super-Cache`.
+
+A dashboard chart summarizes request timings before and after warming. Use the evidence to investigate cache misses, redirects, slow pages and broken URLs. These are HTTP measurements from the warmer, not a visitor's browser rendering time or Core Web Vitals score.
+
+= Include assets and request variants when needed =
+
+Choose whether to request discovered scripts, styles, images and fonts. Configure user agents, request headers, cookies and URL parameters for the cache variants you intend to warm.
+
+Optional second visits without custom cookies or URL parameters help cover the corresponding plain request. Request variants need to match your cache rules; additional variants also increase the work performed.
+
+= Keep interrupted work recoverable =
+
+Pending URLs are stored in the database, and workers coordinate processing of the queue. Interrupted background work can resume through subsequent workers; failed page requests receive a bounded retry and remain visible in the logs.
+
+Configure warm-up log retention to manage history. Recovery information is retained where needed rather than silently discarded.
+
+= Local warming included; external warming optional =
+
+Run local warming from your WordPress server without an external-warmer subscription. An optional licensed service can request pages from configured external locations. See External Services below for the information shared when that integration is enabled.
+
+**Get started with a few cacheable pages, run a warm-up and inspect their cache headers.** Then choose the schedule and crawl coverage that fit your site.
+
+== Installation ==
+
+= Requirements =
+
+* WordPress 6.5 or newer and PHP 7.4 or newer.
+* PHP extensions: curl, dom, json, libxml and mbstring. SimpleXML is needed for XML sitemap parsing.
+* An existing cache that can store eligible HTTP responses.
+* Outbound HTTP access to the URLs being warmed and working WordPress background processing.
+
+= Your first warm-up =
+
+1. Install and activate Cache Warmer.
+2. Open Cache Warmer > Settings.
+3. Add a few public, cacheable URLs as entry points. For a focused first run, use depth 0 and leave additional discovery and asset loading off.
+4. Choose a conservative speed limit and a timeout suitable for your hosting. Leave custom cookies, headers and URL parameters empty unless your cache setup requires them.
+5. Save your settings and start a warm-up from the Cache Warmer main page.
+6. Review the results and cache response headers. Confirm that the intended pages become cache hits before expanding the crawl.
+7. Add your preferred schedule, sitemap discovery or post-update warming once the small run works as expected.
+
+For WooCommerce, begin with public shop, category and product pages. Configure exclusions for cart, checkout, account pages and action URLs such as add-to-cart links. Use your actual page slugs; this is configuration guidance, not a promise of automatic exclusions.
+
+== Frequently Asked Questions ==
+
+= Do I still need a caching plugin or server cache? =
+
+Yes. Cache Warmer makes requests; your existing caching system decides whether to store and serve them. Without an appropriate cache, those requests still run but may not make subsequent visits faster.
+
+= Which caching systems can it work with? =
+
+The approach can work with WordPress page-cache plugins, hosting caches, reverse proxies and CDNs that populate their cache from ordinary eligible requests. Compatibility depends on your cache keys, cookies, headers and exclusion rules. Test the setup using the warm-up logs and your cache's own diagnostics.
+
+= Does it work with Cloudflare? =
+
+It can warm eligible responses when requests pass through Cloudflare and your Cloudflare configuration caches them. The plugin does not turn on HTML caching or override bypass rules. Logs show the `cf-cache-status` header when available.
+
+A local run does not guarantee that every Cloudflare location is warm. CDN routing and cache distribution remain under the CDN's control.
+
+= Can I use it on a WooCommerce store? =
+
+Yes, for public pages your cache is configured to serve safely, such as product and category pages. Keep private, personalized and transactional pages out of the crawl, and avoid session cookies unless you deliberately need a particular request variant.
+
+For large catalogues, start with important URLs or a targeted sitemap. Deep crawls of filters, sorting and query-string combinations can generate much more work than the product count suggests.
+
+= What is the difference between warming and clearing the cache? =
+
+Clearing removes cached responses. Warming requests pages so eligible responses can be cached again. Start a warm-up after your normal purge process when you want to rebuild selected pages; warming alone does not guarantee removal of stale content.
+
+= Will warming add load to my server? =
+
+Yes. Building an uncached page consumes resources. The purpose is to do that work ahead of visitors, at a pace you control. Set appropriate speed, depth, asset and schedule limits, particularly on shared hosting or busy stores.
+
+= Why is the run slower than the configured pages per minute? =
+
+The setting is a maximum rate. Slow responses, retries, throttling and gaps between background workers can reduce actual throughput. Check timings and scheduled tasks before increasing the limit.
+
+= Does a successful request prove that a page is cached? =
+
+No. HTTP 200 means a request succeeded, not necessarily that the response was stored in a cache. Check cache-status headers and your caching configuration. Cookies, query parameters or cache-control rules may cause a bypass.
+
+= What if a page fails or a worker stops? =
+
+The plugin retains pending work for subsequent workers and records page failures. Failed page requests receive a bounded retry, rather than being retried forever. Persistent HTTP errors still need investigation; a crawl completing does not mean every URL succeeded.
+
+= Does asset preloading execute JavaScript? =
+
+No. The warmer requests discovered asset URLs. It is an HTTP crawler, not a full browser, so it does not execute scripts, interact with the page or discover every resource loaded dynamically by JavaScript.
+
+= Can I start or stop a warm-up with WP-CLI? =
+
+Yes. Use `wp cache-warmer start` or `wp cache-warmer stop`. These commands schedule the operation; background workers still need to run. A successful start command does not mean the crawl has already finished.
+
+= How do I keep logs manageable? =
+
+Set the warm-up log retention period in Settings. The plugin also cleans up older records for its warming actions in Action Scheduler. Active work and retained recovery data can outlive ordinary history, so retention is not a fixed database-size limit.
+
+= Is the external warming service required? =
+
+No. Local warming is included. External warming is an optional licensed integration; availability and access depend on the service configuration. Contact wp@tmm.ventures for details.
+
+= Where can I get help? =
+
+Open a topic in the [WordPress.org support forum](https://wordpress.org/support/plugin/cache-warmer/) or email wp@tmm.ventures.
+
+Include your WordPress and Cache Warmer versions, caching setup, the affected URL if public, and the relevant HTTP error or diagnostic message. Remove license keys, cookies, authorization headers and private URLs before sharing logs.
+
+== Screenshots ==
+
+1. Warm-up summary and visited URLs, with success counts and request timings.
+2. Crawl coverage: entry points, exclusions, link depth and asset selection.
+3. Request configuration: speed, timeout, user agents, cookies and headers. The legacy object-cache queue option shown here is no longer used.
+4. Automatic schedules and warming after content updates.
+5. Configurable warm-up log retention.
+6. Optional external-warmer license configuration.
+7. Run history with HTTP results and cache-status headers.
+8. Separate history for warming triggered by content updates.
+
+Screenshots show an earlier interface; current controls may differ. Sample timings illustrate the reports and are not performance guarantees.
+
+== External Services ==
+
+= Crawl destinations =
+
+Local warming sends HTTP requests to configured entry points and discovered page or asset URLs, which may include external hosts. Those hosts receive the warmer's connection information and configured request headers, including any cookies or URL parameters you supply. Configure only destinations and credentials appropriate for the crawl.
+
+= Optional external warmer =
+
+Adding or changing an external-warmer license key sends the site domain and key to https://validate.cachewarmer.xyz/ for validation. When external warming is enabled, the selected service endpoints receive the domain, license key, target URLs and configured request headers, including user-agent and cookie values. Those servers then request the target URLs and return results to the plugin.
+
+Local warming does not require this service. Review the configured servers and avoid sending sensitive session cookies or credentials unless appropriate for your intended use. Contact wp@tmm.ventures for access, service terms and privacy information.
 
 == Changelog ==
+
+= 1.5.1 2026-11-05 =
+
+* Keep dashboard loading responsive by preparing warm-up statistics in the background and displaying cached results.
+* Continue warming updated posts, pages and products at the configured interval after each queue drain. Preserve queued updates and delay retries when a worker fails.
+* Respect interval changes and disabling during a running job, and display the enabled default correctly in Settings.
+
+= 1.5.0 2026-11-05 =
+
+* Performance release: bring the queue-processing improvements verified in 1.4.16 to WordPress.org users. Large warm-up configurations avoid expensive repeated payload sorting, and excluded URLs are processed in bounded batches.
+* In one production observation, individual warming workers completed in 1–3 seconds instead of roughly 100 seconds. This is an observed worker-execution improvement, not a guaranteed page-load or whole-crawl speedup.
+* Show accurate completion timestamps and elapsed duration, clearly label average visit speed, and retain skipped totals across log pages.
+* Preserve pending URLs, existing history, crash recovery, bounded retries and configured HTTP visit limits. No additional runtime changes from 1.4.16.
+
+= 1.4.16 2026-11-05 =
+
+* Speed up queue selection for large warm-up configurations without changing visit priority or queued data.
+* Process excluded URLs in bounded batches while preserving recovery, retries and HTTP visit limits.
+* Correct elapsed duration and average visit speed, show completion timestamps, and keep skipped totals visible on every log page.
 
 = 1.4.15 2026-11-03 =
 
@@ -561,3 +715,11 @@ Visits website pages to warm (create) the cache if you have any caching solution
 #### Enhancements
 
 * Changelog added.
+
+== Upgrade Notice ==
+
+= 1.5.1 =
+Faster dashboard loading and reliable warming after content updates. Existing settings, queued URLs and history are preserved.
+
+= 1.5.0 =
+Substantial queue-processing improvements for large warm-ups, faster handling of excluded URLs and clearer progress reporting. Existing queued work is preserved.

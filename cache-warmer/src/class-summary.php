@@ -13,7 +13,8 @@ namespace Cache_Warmer;
  * Each accessor queries current database state without caching or modifying it.
  * Separate calls do not form a consistent snapshot. Historical return values
  * preserve database scalar types; a failed read can be indistinguishable from
- * missing data and is not promoted to an exception by this class.
+ * missing data. Duration additionally checks pending queue state and propagates
+ * failures of that authoritative lookup.
  */
 final class Summary {
 
@@ -302,11 +303,12 @@ final class Summary {
 	}
 
 	/**
-	 * Read the newest and oldest completed visit/list rows by log_date.
+	 * Read the newest and oldest completed visit/list rows by completion time.
 	 *
 	 * Returns newest first and oldest second, excluding cancelled, pending and
 	 * zero-date visits. UNION ALL repeats a sole matching visit twice. Equal
-	 * dates have no additional tie breaker. SELECT * retains the database's
+	 * completion dates are ordered by visit ID. Only two selected identities load
+	 * payloads, keeping large metadata out of the sort. Joined rows retain the database's
 	 * existing joined-column collision behavior; this is not a unique-ID API.
 	 *
 	 * @param string|int $warmed_at Public run identifier or legacy aggregate selector.
@@ -322,22 +324,29 @@ final class Summary {
 		$results = $wpdb->get_results(
 			$wpdb->prepare(
 				"
-					(SELECT *
+					SELECT logs.*, list.* FROM (
+					(SELECT logs.id
 					FROM %i AS logs
 					INNER JOIN %i AS list ON logs.list_id=list.id
 					WHERE $list_condition AND logs.warm_date IS NOT NULL AND logs.warm_date != '0000-00-00 00:00:00' AND logs.is_cancelled = 0
-					ORDER BY log_date DESC
+					ORDER BY logs.warm_date DESC, logs.id DESC
 					LIMIT 1)
 
 					UNION ALL
 
-					(SELECT *
+					(SELECT logs.id
 					FROM %i AS logs
 					INNER JOIN %i AS list ON logs.list_id=list.id
 					WHERE $list_condition AND logs.warm_date IS NOT NULL AND logs.warm_date != '0000-00-00 00:00:00' AND logs.is_cancelled = 0
-					ORDER BY log_date ASC
+					ORDER BY logs.warm_date ASC, logs.id ASC
 					LIMIT 1)
+					) AS endpoints
+					INNER JOIN %i AS logs ON logs.id = endpoints.id
+					INNER JOIN %i AS list ON list.id = logs.list_id
+					ORDER BY logs.warm_date DESC, logs.id DESC
 				",
+				$logs_table,
+				$list_table,
 				$logs_table,
 				$list_table,
 				$logs_table,
@@ -350,38 +359,49 @@ final class Summary {
 	}
 
 	/**
-	 * Calculates elapsed time between the newest and oldest completed visits.
+	 * Calculate elapsed time from first completion to last completion or now.
 	 *
-	 * Uses the current selector semantics of `get_first_and_last_log_fields()`.
-	 * Empty or incomplete results produce zero. A single matching visit is repeated
-	 * by that reader and therefore also produces zero. Formatting is timezone-neutral
-	 * and switches to a zero-based day count at 24 hours.
+	 * Pending work extends the interval through the current site-local time, so
+	 * idle delivery no longer presents a frozen high average. Finished runs stop
+	 * at their last completion. Queue admission dates are deliberately ignored.
+	 * The reporting interval is wall time, including pauses; it is not CPU time.
+	 * Stored local timestamps are interpreted as UTC wall-clock values to avoid
+	 * depending on PHP's default timezone. Historical DST changes remain subject
+	 * to the ambiguity of the existing local-time storage format.
 	 *
-	 * @param string|int $warmed_at     Public run identifier or legacy aggregate selector.
-	 * @param bool       $get_timestamp Whether to return elapsed seconds instead of formatted text.
-	 *
-	 * @return int|string Non-negative elapsed seconds or an `H:i:s`/`z H:i:s` string.
+	 * @param string|int $warmed_at Public run identifier or legacy aggregate selector.
+	 * @param bool       $get_timestamp Return seconds instead of formatted text.
+	 * @return int|string Non-negative seconds or days followed by H:i:s.
+	 * @throws \RuntimeException When pending queue state cannot be read.
 	 */
 	public static function get_warm_up_duration( $warmed_at, $get_timestamp = false ) {
-		$first_and_last_rows = self::get_first_and_last_log_fields( $warmed_at );
-
-		if ( ! $first_and_last_rows || count( $first_and_last_rows ) < 2 ) {
+		$rows = self::get_first_and_last_log_fields( $warmed_at );
+		if ( ! $rows || count( $rows ) < 2 ) {
 			return $get_timestamp ? 0 : '00:00:00';
 		}
-		$diff = strtotime( $first_and_last_rows[0]['log_date'] ) - strtotime( $first_and_last_rows[1]['log_date'] );
-		return $get_timestamp ? $diff : ( $diff < 86400 ? gmdate( 'H:i:s', $diff ) : gmdate( 'z H:i:s', $diff ) );
+		$start = strtotime( $rows[1]['warm_date'] . ' UTC' );
+		$end   = strtotime( $rows[0]['warm_date'] . ' UTC' );
+		if ( DB::warmup_has_pending_links( (int) $rows[0]['list_id'] ) ) {
+			$end = max( $end, strtotime( wp_date( 'Y-m-d H:i:s' ) . ' UTC' ) );
+		}
+		$diff = max( 0, $end - $start );
+		if ( $get_timestamp ) {
+			return $diff;
+		}
+		$days = (int) floor( $diff / DAY_IN_SECONDS );
+		return ( $days ? $days . ' ' : '' ) . gmdate( 'H:i:s', $diff );
 	}
 
-    /**
-     * Get warm-up speed.
-     *
-     * @param string $warmed_at Warm-up to get the data for.
-     *
-     * @return float Warm-up speed (pages/minute).
-     */
-    public static function get_warm_up_speed( $warmed_at ) {
-        $rows_count       = self::get_log_rows_count( $warmed_at ) - self::get_log_skipped_count( $warmed_at );
-        $duration_minutes = self::get_warm_up_duration( $warmed_at, true ) / 60;
-        return round( $duration_minutes ? ( $rows_count / $duration_minutes ) : $rows_count, 2 );
-    }
+	/**
+	 * Get the average completed HTTP-visit rate over the reporting interval.
+	 *
+	 * @param string $warmed_at Warm-up to get the data for.
+	 *
+	 * @return float Average visits/minute, excluding skipped rows. Not instantaneous throughput.
+	 */
+	public static function get_warm_up_speed( $warmed_at ) {
+		$rows_count       = self::get_log_rows_count( $warmed_at ) - self::get_log_skipped_count( $warmed_at );
+		$duration_minutes = self::get_warm_up_duration( $warmed_at, true ) / 60;
+		return round( $duration_minutes ? ( $rows_count / $duration_minutes ) : $rows_count, 2 );
+	}
 }

@@ -1110,8 +1110,9 @@ final class DB {
 	 * Scheduled queues precede triggered queues. Scheduled run IDs descend;
 	 * triggered run IDs ascend. Within each run, phase, depth and row ID ascend.
 	 * Only rows with a null completion date in legacy/ready queues are selected.
-	 * This is a read, not a claim or lock: callers must establish worker ownership
-	 * separately. A failed read throws before any later query can clear the
+	 * Only the limited identity set is joined to potentially large payloads, avoiding
+	 * repeated metadata in the queue sort. This is a read, not a claim or lock:
+	 * callers must establish worker ownership separately. A failed read throws before any later query can clear the
 	 * database error. This method never acknowledges or deletes pending work.
 	 *
 	 * @param int  $limit          SQL row limit, passed through without clamping. Default 2.
@@ -1129,31 +1130,42 @@ final class DB {
 		$logs_table = self::get_tables_prefix() . 'warm_ups_logs';
 		$list_table = self::get_tables_prefix() . 'warm_ups_list';
 
-		$scheduled_condition = $scheduled_only ? "AND list.warmup_type = 'scheduled'" : '';
 
+		// LIMIT makes this derived identity set non-mergeable. Large metadata and
+		// log payloads are loaded only for the selected IDs, never per sort entry.
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
 				"
-			            SELECT logs.*, list.meta, list.warmup_type, list.warmed_at AS warmup_started_at
-		            FROM %i AS logs
-		            INNER JOIN %i AS list
-		            ON logs.list_id = list.id
-			            WHERE logs.warm_date IS NULL
-			            AND list.warmup_type != 'external'
-			            AND list.queue_state IN ('legacy', 'ready')
-			            $scheduled_condition
-			            ORDER BY
-			                CASE WHEN list.warmup_type = 'scheduled' THEN 0 ELSE 1 END,
-			                CASE WHEN list.warmup_type = 'scheduled' THEN list.id END DESC,
-			                CASE WHEN list.warmup_type = 'unscheduled' THEN list.id END ASC,
-			                logs.log_phase ASC,
-			                logs.log_depth ASC,
-			                logs.id ASC
-			            LIMIT %d;
-	            ",
+				SELECT logs.*, list.meta, list.warmup_type, list.warmed_at AS warmup_started_at
+				FROM (
+					SELECT logs.id
+					FROM %i AS logs
+					INNER JOIN %i AS list ON logs.list_id = list.id
+					WHERE logs.warm_date IS NULL
+					AND list.warmup_type != 'external'
+					AND list.queue_state IN ('legacy', 'ready')
+					AND ( %d = 0 OR list.warmup_type = 'scheduled' )
+					ORDER BY
+						CASE WHEN list.warmup_type = 'scheduled' THEN 0 ELSE 1 END,
+						CASE WHEN list.warmup_type = 'scheduled' THEN list.id END DESC,
+						CASE WHEN list.warmup_type = 'unscheduled' THEN list.id END ASC,
+						logs.log_phase ASC, logs.log_depth ASC, logs.id ASC
+					LIMIT %d
+				) AS selected
+				INNER JOIN %i AS logs ON logs.id = selected.id
+				INNER JOIN %i AS list ON list.id = logs.list_id
+				ORDER BY
+					CASE WHEN list.warmup_type = 'scheduled' THEN 0 ELSE 1 END,
+					CASE WHEN list.warmup_type = 'scheduled' THEN list.id END DESC,
+					CASE WHEN list.warmup_type = 'unscheduled' THEN list.id END ASC,
+					logs.log_phase ASC, logs.log_depth ASC, logs.id ASC
+				",
 				$logs_table,
 				$list_table,
-				$limit
+				(int) $scheduled_only,
+				$limit,
+				$logs_table,
+				$list_table
 			),
 			ARRAY_A
 		);

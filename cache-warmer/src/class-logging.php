@@ -481,7 +481,7 @@ final class Logging {
 	 * array; the existing foreach can emit a warning for a non-iterable failure.
 	 * Does not cache results, throw a read-failure exception or persist changes.
 	 *
-	 * @param string|int $warmed_at Public run identifier or legacy aggregate selector.
+	 * @param string|int $warmed_at    Public run identifier or legacy aggregate selector.
 	 * @param int        $page      Intended one-based page number; no range validation is performed here.
 	 * @return array[] Associative visit rows with normalized after-check timings.
 	 */
@@ -569,15 +569,20 @@ final class Logging {
         }
     }
 
-    /**
-     * Returns the HTML string for the warm log.
-     *
-     * @param string $warmed_at  File name to get the log content for.
-     * @param array  $log_content  Log content.
-     * @param int    $current_page For which page to retrieve the content.
-     *
-     * @return string Log content HTML string.
-     */
+	/**
+	 * Render one log page with run-wide statistics and completion timestamps.
+	 *
+	 * Reads current aggregate state without changing saved rows. Skipped totals
+	 * remain visible even when this page has no exclusions. The speed label is
+	 * explicitly an elapsed average, not an instantaneous throughput measurement.
+	 * Separate aggregate reads need not describe one atomic database snapshot.
+	 *
+	 * @param string|int $warmed_at    Public run identifier or legacy aggregate selector.
+	 * @param array[]    $log_content  Rows returned by get_log_content(), including warm_date.
+	 * @param int        $current_page One-based page number, default 1.
+	 * @return string Log HTML, or the translated no-data message for empty rows.
+	 * @throws \RuntimeException When pending state for elapsed duration cannot be read.
+	 */
     public static function format_log_content_array_into_string( $warmed_at, $log_content, $current_page = 1 ) {
         if ( ! $log_content ) {
             return __( 'No data here yet.', 'cache-warmer' );
@@ -628,12 +633,8 @@ final class Logging {
             }
         );
 
-        $has_skipped_warms = array_filter(
-            array_column( $log_content, 'log_phase' ),
-            function( $phase ) {
-                return 2 === (int) $phase;
-            }
-        );
+		// The summary describes the entire run, not only the selected log page.
+		$has_skipped_warms = (int) $skipped > 0;
 
         $has_retry = array_filter(
             array_column( $log_content, 'log_phase' ),
@@ -663,7 +664,7 @@ final class Logging {
                         <?php endif; ?>
                         <?php if ( ! in_array( $warmed_at_first_part, [ External_Warmer::WARMUP_ID, '0', '0000-00-00' ] ) ) : ?>
                             <th><?php esc_html_e( 'Duration', 'cache-warmer' ); ?></th>
-                            <th><?php esc_html_e( 'Speed (pages / minute)', 'cache-warmer' ); ?></th>
+							<th><?php esc_html_e( 'Average speed (visits / minute)', 'cache-warmer' ); ?></th>
                         <?php endif; ?>
                     </tr>
                 </thead>
@@ -772,7 +773,7 @@ final class Logging {
 
                     ?>
                     <tr class="<?php echo ( ! $log_entity['log_is_success'] && 2 !== (int) $log_entity['log_phase'] ) ? 'cache-warmer-log-failure' : ( 2 === (int) $log_entity['log_phase'] ? 'cache-warmer-log-skipped' : '' ); ?>">
-                        <td><?php echo str_replace( '-', '&#x2011;', esc_html( $log_entity['log_date'] ) ); // @codingStandardsIgnoreLine ?></td>
+                        <td><?php echo str_replace( '-', '&#x2011;', esc_html( $log_entity['warm_date'] ) ); // @codingStandardsIgnoreLine ?></td>
                         <?php
                         if ( ! in_array( $warmed_at_first_part, [ External_Warmer::WARMUP_ID, '0', '0000-00-00' ], true ) ) :
                             ?>

@@ -454,7 +454,7 @@ use WP_Plugins_Core\Setting_Fields;
                         [
                             'title'    => __( 'Warm-up posts', 'cache-warmer' ),
                             'id'       => 'warm-up-posts',
-                            'value'    => '1' === Cache_Warmer::$options->get( 'cache-warmer-setting-warm-up-posts' ) ? 'yes' : 'no',
+							'value'    => (bool) Cache_Warmer::$options->get( 'cache-warmer-setting-warm-up-posts' ) ? 'yes' : 'no',
                             'type'     => 'checkbox',
                             'desc'     => __( 'On their publication and edit', 'cache-warmer' ),
                             'desc_tip' => $warm_up_posts_desc_tip,

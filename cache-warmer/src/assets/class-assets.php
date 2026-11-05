@@ -14,10 +14,14 @@ namespace Cache_Warmer\Assets;
  */
 final class Assets {
 
-    /**
-     * Constructor.
-     */
-    public function __construct() {
+	/**
+	 * Register background chart refresh on every request, then screen-specific assets.
+	 *
+	 * The refresh callback must also exist in cron/CLI requests without an admin
+	 * screen. Registration does not query logs or schedule a refresh.
+	 */
+	public function __construct() {
+		add_action( 'cache_warmer_refresh_dashboard_statistics', array( Dashboard::class, 'refresh_statistics' ) );
         add_action(
             'current_screen',
             function () {

@@ -30,13 +30,14 @@ require_once __DIR__ . '/vendor/woocommerce/action-scheduler/action-scheduler.ph
 require_once __DIR__ . '/src/class-scheduler-cleanup.php';
 \Cache_Warmer\Scheduler_Cleanup::run();
 
-// Delete all fixed plugin options plus legacy operational flags.
+// Delete fixed options, the lazily read dashboard snapshot and legacy flags.
 
 $all_options  = require __DIR__ . '/data/options.php';
 $option_names = array_unique(
 	array_merge(
 		array_keys( $all_options ),
 		[
+			'cache-warmer-dashboard-statistics',
 			'cache-warmer-updating',
 			'cache-warmer-setting-use-object-cache',
 		]

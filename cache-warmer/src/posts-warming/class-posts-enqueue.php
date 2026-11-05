@@ -34,9 +34,10 @@ final class Posts_Enqueue {
 	}
 
 	/**
-	 * Adds a newly published post to the durable shared queue.
+	 * Adds a published post or an edit of a published post to the shared queue.
 	 *
-	 * Repeated transitions are deduplicated by the database queue. Transitions
+	 * WordPress fires this hook for publish-to-publish edits as well as first
+	 * publication. Repeated transitions are deduplicated by the queue. Transitions
 	 * away from publish are ignored; the old status remains part of the
 	 * WordPress hook signature.
 	 *
